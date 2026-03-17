@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"github.com/QuantumNous/new-api/i18n"
 	"bufio"
 	"context"
 	"fmt"
@@ -132,7 +133,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		gopool.Go(func() {
 			defer func() {
 				if r := recover(); r != nil {
-					logger.LogError(c, fmt.Sprintf("ping goroutine panic: %v", r))
+					logger.LogError(c, fmt.Sprintf(i18n.Translate("relay.ping_goroutine_panic"), r))
 					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonPanic, fmt.Errorf("ping panic: %v", r))
 					stop()
 				}
@@ -169,7 +170,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 					// 监听客户端断开连接
 					return
 				case <-pingTimeout.C:
-					logger.LogError(c, "ping goroutine max duration reached")
+					logger.LogError(c, i18n.Translate("relay.ping_goroutine_max_duration_reached"))
 					return
 				}
 			}
@@ -182,7 +183,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	gopool.Go(func() {
 		defer func() {
 			if r := recover(); r != nil {
-				logger.LogError(c, fmt.Sprintf("data handler goroutine panic: %v", r))
+				logger.LogError(c, fmt.Sprintf(i18n.Translate("relay.data_handler_goroutine_panic"), r))
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonPanic, fmt.Errorf("handler panic: %v", r))
 			}
 			stop()
@@ -209,7 +210,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		defer func() {
 			close(dataChan)
 			if r := recover(); r != nil {
-				logger.LogError(c, fmt.Sprintf("scanner goroutine panic: %v", r))
+				logger.LogError(c, fmt.Sprintf(i18n.Translate("relay.scanner_goroutine_panic"), r))
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonPanic, fmt.Errorf("scanner panic: %v", r))
 			}
 			stop()
