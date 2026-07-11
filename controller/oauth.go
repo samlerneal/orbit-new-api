@@ -48,7 +48,7 @@ func HandleOAuth(c *gin.Context) {
 	if provider == nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": i18n.T(c, i18n.MsgOAuthUnknownProvider),
+			"message": i18n.T(c, "oauth.unknown_provider"),
 		})
 		return
 	}
@@ -60,7 +60,7 @@ func HandleOAuth(c *gin.Context) {
 	if state == "" || session.Get("oauth_state") == nil || state != session.Get("oauth_state").(string) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
-			"message": i18n.T(c, i18n.MsgOAuthStateInvalid),
+			"message": i18n.T(c, "oauth.state_invalid"),
 		})
 		return
 	}
@@ -74,7 +74,7 @@ func HandleOAuth(c *gin.Context) {
 
 	// 3. Check if provider is enabled
 	if !provider.IsEnabled() {
-		common.ApiErrorI18n(c, i18n.MsgOAuthNotEnabled, providerParams(provider.GetName()))
+		common.ApiErrorI18n(c, "oauth.not_enabled", providerParams(provider.GetName()))
 		return
 	}
 
@@ -113,7 +113,7 @@ func HandleOAuth(c *gin.Context) {
 		}
 		switch err.(type) {
 		case *OAuthUserDeletedError:
-			common.ApiErrorI18n(c, i18n.MsgOAuthUserDeleted)
+			common.ApiErrorI18n(c, "oauth.user_deleted")
 		case *OAuthRegistrationDisabledError:
 			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
 		case *OAuthEmailAlreadyTakenError:
@@ -126,7 +126,7 @@ func HandleOAuth(c *gin.Context) {
 
 	// 8. Check user status
 	if user.Status != common.UserStatusEnabled {
-		common.ApiErrorI18n(c, i18n.MsgOAuthUserBanned)
+		common.ApiErrorI18n(c, "oauth.user_banned")
 		return
 	}
 
@@ -137,7 +137,7 @@ func HandleOAuth(c *gin.Context) {
 // handleOAuthBind handles binding OAuth account to existing user
 func handleOAuthBind(c *gin.Context, provider oauth.Provider) {
 	if !provider.IsEnabled() {
-		common.ApiErrorI18n(c, i18n.MsgOAuthNotEnabled, providerParams(provider.GetName()))
+		common.ApiErrorI18n(c, "oauth.not_enabled", providerParams(provider.GetName()))
 		return
 	}
 
@@ -158,13 +158,13 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider) {
 
 	// Check if this OAuth account is already bound (check both new ID and legacy ID)
 	if provider.IsUserIDTaken(oauthUser.ProviderUserID) {
-		common.ApiErrorI18n(c, i18n.MsgOAuthAlreadyBound, providerParams(provider.GetName()))
+		common.ApiErrorI18n(c, "oauth.already_bound", providerParams(provider.GetName()))
 		return
 	}
 	// Also check legacy ID to prevent duplicate bindings during migration period
 	if legacyID, ok := oauthUser.Extra["legacy_id"].(string); ok && legacyID != "" {
 		if provider.IsUserIDTaken(legacyID) {
-			common.ApiErrorI18n(c, i18n.MsgOAuthAlreadyBound, providerParams(provider.GetName()))
+			common.ApiErrorI18n(c, "oauth.already_bound", providerParams(provider.GetName()))
 			return
 		}
 	}
@@ -228,10 +228,10 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 			}
 			if user.Id != 0 {
 				// Found user with legacy ID, migrate to new ID
-				common.SysLog(fmt.Sprintf("[OAuth] Migrating user %d from legacy_id=%s to new_id=%s",
+				common.SysLog(fmt.Sprintf(i18n.Translate("ctrl.oauth_migrating_user_rom_legacy_id_o_new"),
 					user.Id, legacyID, oauthUser.ProviderUserID))
 				if err := user.UpdateGitHubId(oauthUser.ProviderUserID); err != nil {
-					common.SysError(fmt.Sprintf("[OAuth] Failed to migrate user %d: %s", user.Id, err.Error()))
+					common.SysError(fmt.Sprintf(i18n.Translate("ctrl.oauth_failed_to_migrate_user"), user.Id, err.Error()))
 					// Continue with login even if migration fails
 				}
 				return user, nil
@@ -374,7 +374,7 @@ func handleOAuthError(c *gin.Context, err error) {
 	case *oauth.AccessDeniedError:
 		common.ApiErrorMsg(c, e.Message)
 	case *oauth.TrustLevelError:
-		common.ApiErrorI18n(c, i18n.MsgOAuthTrustLevelLow)
+		common.ApiErrorI18n(c, "oauth.trust_level_low")
 	default:
 		common.ApiError(c, err)
 	}
