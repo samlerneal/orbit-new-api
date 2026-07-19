@@ -69,7 +69,7 @@ func newProtectedFetchHTTPClientWithProxy(resolver ssrfResolver, dialContext fun
 	}
 	if dialContext == nil {
 		netDialer := &net.Dialer{
-			Timeout:   30 * time.Second,
+			Timeout:   time.Duration(common.RelayDialTimeout) * time.Second,
 			KeepAlive: 30 * time.Second,
 		}
 		dialContext = netDialer.DialContext
@@ -81,7 +81,11 @@ func newProtectedFetchHTTPClientWithProxy(resolver ssrfResolver, dialContext fun
 		proxy = http.ProxyFromEnvironment
 	}
 
-	client := &http.Client{
+	// Keep client.Timeout unbounded (0), matching newOutboundHTTPClient.
+	// RelayTimeout must not cover response-body reads: long-lived streams would
+	// be aborted once RELAY_TIMEOUT elapses. Dial/header stall protection lives
+	// on the dialer and transport (ResponseHeaderTimeout).
+	return &http.Client{
 		Transport: &ssrfProtectedRoundTripper{
 			resolver:      resolver,
 			dialContext:   dialContext,
@@ -91,10 +95,6 @@ func newProtectedFetchHTTPClientWithProxy(resolver ssrfResolver, dialContext fun
 		},
 		CheckRedirect: checkProtectedFetchRedirect,
 	}
-	if common.RelayTimeout != 0 {
-		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
-	}
-	return client
 }
 
 func (t *ssrfProtectedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -153,18 +153,7 @@ func (t *ssrfProtectedRoundTripper) newTransport(proxyURL *url.URL) *http.Transp
 		proxyFunc = nil
 	}
 
-	transport := &http.Transport{
-		MaxIdleConns:        common.RelayMaxIdleConns,
-		MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
-		IdleConnTimeout:     time.Duration(common.RelayIdleConnTimeout) * time.Second,
-		ForceAttemptHTTP2:   true,
-		Proxy:               proxyFunc,
-		DialContext:         dialContext,
-	}
-	if common.TLSInsecureSkipVerify {
-		transport.TLSClientConfig = common.InsecureTLSConfig
-	}
-	return transport
+	return common.NewOutboundHTTPTransport(proxyFunc, dialContext)
 }
 
 func (d *protectedFetchDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
