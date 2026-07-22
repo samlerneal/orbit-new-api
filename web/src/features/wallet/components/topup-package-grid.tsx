@@ -26,11 +26,11 @@ import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatLocalCurrencyAmount } from '@/lib/currency'
 
-import type { TopupPackage } from '../types'
+import type { TopupCampaign, TopupPackage } from '../types'
 
 interface TopupPackageGridProps {
   packages: TopupPackage[]
-  promotionEnabled: boolean
+  campaigns: TopupCampaign[]
   loading: boolean
   paymentAvailable: boolean
   onSelectPackage: (packageOption: TopupPackage) => void
@@ -74,23 +74,27 @@ export function TopupPackageGrid(props: TopupPackageGridProps) {
 
   return (
     <div className='space-y-4'>
-      {props.promotionEnabled && (
-        <Alert className='border-amber-200 bg-amber-50/70 text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100'>
+      {props.campaigns.map((campaign) => (
+        <Alert
+          key={campaign.id}
+          className='border-amber-200 bg-amber-50/70 text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100'
+        >
           <Sparkles className='size-4' />
-          <AlertTitle>{t('Limited-time bonus')}</AlertTitle>
-          <AlertDescription>
-            {t('Choose a qualifying package to receive extra balance.')}
-          </AlertDescription>
+          <AlertTitle className='flex items-center justify-between gap-3'>
+            <span>{t(campaign.title)}</span>
+            <Badge variant='outline' className='border-amber-300'>
+              {t('Maximum bonus {{amount}}', {
+                amount: formatLocalCurrencyAmount(campaign.max_bonus),
+              })}
+            </Badge>
+          </AlertTitle>
+          <AlertDescription>{t(campaign.description)}</AlertDescription>
         </Alert>
-      )}
+      ))}
 
       <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
         {props.packages.map((packageOption) => {
-          const hasBonus =
-            props.promotionEnabled &&
-            packageOption.credit_amount > packageOption.pay_amount
-          const bonusAmount =
-            packageOption.credit_amount - packageOption.pay_amount
+          const hasBonus = packageOption.bonus_amount > 0
 
           return (
             <Card
@@ -103,12 +107,8 @@ export function TopupPackageGrid(props: TopupPackageGridProps) {
                   <h3 className='text-lg font-semibold'>
                     {t(packageOption.name)}
                   </h3>
-                  {hasBonus && (
-                    <Badge variant='secondary'>
-                      {t('Bonus {{amount}}', {
-                        amount: formatLocalCurrencyAmount(bonusAmount),
-                      })}
-                    </Badge>
+                  {packageOption.tag && (
+                    <Badge variant='secondary'>{t(packageOption.tag)}</Badge>
                   )}
                 </div>
                 <p className='text-muted-foreground text-sm'>
@@ -128,13 +128,32 @@ export function TopupPackageGrid(props: TopupPackageGridProps) {
                 <p className='text-muted-foreground mt-4 text-sm'>
                   {t('Balance received: {{amount}}', {
                     amount: formatLocalCurrencyAmount(
-                      packageOption.credit_amount
+                      packageOption.display_credit_amount
                     ),
                   })}
                 </p>
+                {hasBonus && (
+                  <div className='mt-2 flex flex-wrap gap-1.5'>
+                    {packageOption.campaign_badges.map((badge) => (
+                      <Badge
+                        key={badge.campaign_id}
+                        className='border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300'
+                        variant='outline'
+                      >
+                        {t(badge.text)}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
                 <div className='mt-auto flex items-center gap-2 border-t pt-4 text-sm'>
                   <Check className='size-4' />
-                  <span>{t('Balance never expires')}</span>
+                  <span>
+                    {hasBonus
+                      ? t(
+                          'Regular balance never expires; bonus has its own expiry'
+                        )
+                      : t('Balance never expires')}
+                  </span>
                 </div>
               </CardContent>
 

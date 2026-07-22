@@ -34,8 +34,8 @@ jobs:
 
       - name: Run payment tests
         run: >-
-          go test ./setting/operation_setting ./model
-          -run 'TestResolveTopupPackage|TestCompleteEpayTopUp'
+          go test ./setting/operation_setting ./model ./service
+          -run 'TestResolveTopupPackage|TestCompleteEpayTopUp|TestCampaignReward|TestWalletConsumes|TestExpiredBonus'
           -count=1
 
       - name: Set up Bun

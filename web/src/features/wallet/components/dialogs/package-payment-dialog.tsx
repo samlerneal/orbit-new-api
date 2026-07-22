@@ -68,7 +68,7 @@ export function PackagePaymentDialog(props: PackagePaymentDialogProps) {
               <div className='text-muted-foreground mt-4 text-sm'>
                 {t('Balance received: {{amount}}', {
                   amount: formatLocalCurrencyAmount(
-                    packageOption.credit_amount
+                    packageOption.display_credit_amount
                   ),
                 })}
               </div>

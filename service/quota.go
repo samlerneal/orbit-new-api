@@ -90,7 +90,7 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	if relayInfo.UsePrice {
 		return nil
 	}
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+	userQuota, err := model.GetUserSpendableQuota(relayInfo.UserId)
 	if err != nil {
 		return err
 	}
@@ -425,8 +425,15 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 	} else {
 		// Wallet
 		if quota > 0 {
-			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
+			_, err = model.PreConsumeWalletFunds(
+				"direct-"+common.GetRandomString(24),
+				relayInfo.UserId,
+				quota,
+			)
 		} else {
+			// Legacy negative adjustments have no source allocation snapshot.
+			// Modern request settlement uses BillingSession and restores the
+			// original wallet/bonus split accurately.
 			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
 		}
 		if err != nil {

@@ -12,17 +12,21 @@ import (
 )
 
 type TopUp struct {
-	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
-	Amount          int64   `json:"amount"`
-	CreditQuota     int64   `json:"credit_quota"`
-	Money           float64 `json:"money"`
-	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime      int64   `json:"create_time"`
-	CompleteTime    int64   `json:"complete_time"`
-	Status          string  `json:"status"`
+	Id               int     `json:"id"`
+	UserId           int     `json:"user_id" gorm:"index"`
+	PackageId        string  `json:"package_id" gorm:"type:varchar(64);index"`
+	Amount           int64   `json:"amount"`
+	CreditQuota      int64   `json:"credit_quota"`
+	BonusCreditQuota int64   `json:"bonus_credit_quota"`
+	BonusExpiresAt   int64   `json:"bonus_expires_at" gorm:"-"`
+	CampaignSnapshot string  `json:"-" gorm:"type:text"`
+	Money            float64 `json:"money"`
+	TradeNo          string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod    string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider  string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	CreateTime       int64   `json:"create_time"`
+	CompleteTime     int64   `json:"complete_time"`
+	Status           string  `json:"status"`
 }
 
 const (
@@ -105,6 +109,11 @@ func CompleteEpayTopUp(
 
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
+		bonusAwarded, err := applyCampaignAwardsTx(tx, topUp)
+		if err != nil {
+			return err
+		}
+		topUp.BonusCreditQuota = bonusAwarded
 		if err := tx.Save(topUp).Error; err != nil {
 			return err
 		}
@@ -292,6 +301,42 @@ func GetUserTopUps(userId int, pageInfo *common.PageInfo) (topups []*TopUp, tota
 	return topups, total, nil
 }
 
+func EnrichTopUpsWithBonusExpiry(topups []*TopUp) error {
+	if len(topups) == 0 {
+		return nil
+	}
+	topupIds := make([]int, 0, len(topups))
+	byId := make(map[int]*TopUp, len(topups))
+	for _, topup := range topups {
+		if topup == nil {
+			continue
+		}
+		topupIds = append(topupIds, topup.Id)
+		byId[topup.Id] = topup
+	}
+	if len(topupIds) == 0 {
+		return nil
+	}
+	type expiryRow struct {
+		TopUpId   int
+		ExpiresAt int64
+	}
+	var rows []expiryRow
+	if err := DB.Model(&BonusBalance{}).
+		Select("topup_id, MIN(expires_at) AS expires_at").
+		Where("topup_id IN ?", topupIds).
+		Group("topup_id").
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if topup := byId[row.TopUpId]; topup != nil {
+			topup.BonusExpiresAt = row.ExpiresAt
+		}
+	}
+	return nil
+}
+
 // GetAllTopUps 获取全平台的充值记录（管理员使用，不限制时间窗口）
 func GetAllTopUps(pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
 	tx := DB.Begin()
@@ -420,6 +465,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	var quotaToAdd int
 	var payMoney float64
 	var paymentMethod string
+	credited := false
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
@@ -457,6 +503,11 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		// 标记完成
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
+		bonusAwarded, err := applyCampaignAwardsTx(tx, topUp)
+		if err != nil {
+			return err
+		}
+		topUp.BonusCreditQuota = bonusAwarded
 		if err := tx.Save(topUp).Error; err != nil {
 			return err
 		}
@@ -469,11 +520,18 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		userId = topUp.UserId
 		payMoney = topUp.Money
 		paymentMethod = topUp.PaymentMethod
+		credited = true
 		return nil
 	})
 
 	if err != nil {
 		return err
+	}
+	if !credited {
+		return nil
+	}
+	if err := cacheIncrUserQuota(userId, int64(quotaToAdd)); err != nil {
+		common.SysLog("failed to increase user quota cache after manual topup: " + err.Error())
 	}
 
 	// 事务外记录日志，避免阻塞

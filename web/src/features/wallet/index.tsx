@@ -102,17 +102,17 @@ export function Wallet(props: WalletProps) {
             />
 
             <Tabs defaultValue='pay-as-you-go'>
-              <TabsList className='grid h-auto w-full grid-cols-2 rounded-xl p-1'>
+              <TabsList className='bg-muted/60 grid h-auto w-full grid-cols-2 rounded-xl p-1 dark:bg-white/5'>
                 <TabsTrigger
                   value='pay-as-you-go'
-                  className='min-h-11 gap-2 rounded-lg'
+                  className='data-[state=active]:bg-background min-h-11 gap-2 rounded-lg data-[state=active]:shadow-sm dark:data-[state=active]:bg-white/10'
                 >
                   <Coins className='size-4' />
                   {t('Pay as you go')}
                 </TabsTrigger>
                 <TabsTrigger
                   value='monthly-subscription'
-                  className='min-h-11 gap-2 rounded-lg'
+                  className='data-[state=active]:bg-background min-h-11 gap-2 rounded-lg opacity-55 disabled:opacity-55'
                   disabled
                 >
                   <CalendarDays className='size-4' />
@@ -126,7 +126,7 @@ export function Wallet(props: WalletProps) {
               <TabsContent value='pay-as-you-go' className='mt-5'>
                 <TopupPackageGrid
                   packages={topupInfo?.topup_packages ?? []}
-                  promotionEnabled={topupInfo?.promotion_enabled === true}
+                  campaigns={topupInfo?.campaigns ?? []}
                   loading={topupLoading}
                   paymentAvailable={paymentAvailable}
                   onSelectPackage={handleSelectPackage}

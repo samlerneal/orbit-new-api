@@ -253,6 +253,22 @@ export function BillingHistoryDialog({
                                   abbreviate: false,
                                 })}
                           </div>
+                          {(record.bonus_credit_quota ?? 0) > 0 && (
+                            <div className='text-muted-foreground text-xs'>
+                              {t('Includes {{amount}} promotional balance', {
+                                amount: formatQuota(
+                                  record.bonus_credit_quota ?? 0
+                                ),
+                              })}
+                              {record.bonus_expires_at
+                                ? ` · ${t('Expires: {{date}}', {
+                                    date: formatTimestamp(
+                                      record.bonus_expires_at
+                                    ),
+                                  })}`
+                                : ''}
+                            </div>
+                          )}
                         </div>
                         <div className='space-y-1'>
                           <Label className='text-muted-foreground text-xs'>

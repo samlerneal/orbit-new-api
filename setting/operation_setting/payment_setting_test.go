@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveTopupPackageUsesPayAmountWhenPromotionIsDisabled(t *testing.T) {
+func TestResolveTopupPackageKeepsPermanentCreditWhenCampaignsAreDisabled(t *testing.T) {
 	originalPackages := GetTopupPackages()
 	originalPromotionEnabled := paymentSetting.PromotionEnabled
 	t.Cleanup(func() {
@@ -16,17 +16,17 @@ func TestResolveTopupPackageUsesPayAmountWhenPromotionIsDisabled(t *testing.T) {
 	})
 
 	paymentSetting.TopupPackages = []TopupPackage{
-		{ID: "advanced", PayAmount: 98, CreditAmount: 108},
+		{ID: "advanced", PayAmount: 98, CreditAmount: 100, Enabled: true},
 	}
 	paymentSetting.PromotionEnabled = false
 
 	packageOption, ok := ResolveTopupPackage("advanced")
 	require.True(t, ok)
 	assert.Equal(t, 98.0, packageOption.PayAmount)
-	assert.Equal(t, 98.0, packageOption.CreditAmount)
+	assert.Equal(t, 100.0, packageOption.CreditAmount)
 }
 
-func TestResolveTopupPackageAppliesConfiguredCreditWhenPromotionIsEnabled(t *testing.T) {
+func TestResolveTopupPackageIsIndependentFromLegacyPromotionSwitch(t *testing.T) {
 	originalPackages := GetTopupPackages()
 	originalPromotionEnabled := paymentSetting.PromotionEnabled
 	t.Cleanup(func() {
@@ -35,13 +35,13 @@ func TestResolveTopupPackageAppliesConfiguredCreditWhenPromotionIsEnabled(t *tes
 	})
 
 	paymentSetting.TopupPackages = []TopupPackage{
-		{ID: "advanced", PayAmount: 98, CreditAmount: 108},
+		{ID: "advanced", PayAmount: 98, CreditAmount: 100, Enabled: true},
 	}
 	paymentSetting.PromotionEnabled = true
 
 	packageOption, ok := ResolveTopupPackage("advanced")
 	require.True(t, ok)
-	assert.Equal(t, 108.0, packageOption.CreditAmount)
+	assert.Equal(t, 100.0, packageOption.CreditAmount)
 }
 
 func TestResolveTopupPackageRejectsUnknownOrInvalidPackages(t *testing.T) {
@@ -51,11 +51,14 @@ func TestResolveTopupPackageRejectsUnknownOrInvalidPackages(t *testing.T) {
 	})
 
 	paymentSetting.TopupPackages = []TopupPackage{
-		{ID: "invalid", PayAmount: 0, CreditAmount: 0},
+		{ID: "invalid", PayAmount: 0, CreditAmount: 0, Enabled: true},
+		{ID: "disabled", PayAmount: 14, CreditAmount: 14, Enabled: false},
 	}
 
 	_, foundInvalid := ResolveTopupPackage("invalid")
+	_, foundDisabled := ResolveTopupPackage("disabled")
 	_, foundUnknown := ResolveTopupPackage("missing")
 	assert.False(t, foundInvalid)
+	assert.False(t, foundDisabled)
 	assert.False(t, foundUnknown)
 }

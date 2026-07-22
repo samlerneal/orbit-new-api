@@ -494,6 +494,14 @@ func GetSelf(c *gin.Context) {
 		return
 	}
 	responseData := buildSelfUserData(user)
+	bonusSummary, err := model.GetBonusBalanceSummary(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	responseData["bonus_quota"] = bonusSummary.ActiveQuota
+	responseData["bonus_nearest_expires_at"] = bonusSummary.NearestExpiresAt
+	responseData["total_quota"] = int64(user.Quota) + bonusSummary.ActiveQuota
 	// The authenticated role is loaded from GetUserCache. It should equal the
 	// row role, but use it for capabilities so GetSelf and login/refresh remain
 	// consistent with the authorization decision made for this request.

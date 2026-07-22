@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -332,6 +333,24 @@ func UpdateOption(c *gin.Context) {
 				"success": false,
 				"message": err.Error(),
 			})
+			return
+		}
+	case "payment_setting.topup_packages":
+		var packages []operation_setting.TopupPackage
+		if err = json.Unmarshal([]byte(option.Value.(string)), &packages); err == nil {
+			err = operation_setting.ValidateTopupPackages(packages)
+		}
+		if err != nil {
+			common.ApiErrorMsg(c, "充值档位配置无效: "+err.Error())
+			return
+		}
+	case "payment_setting.campaigns":
+		var campaigns []operation_setting.PaymentCampaign
+		if err = json.Unmarshal([]byte(option.Value.(string)), &campaigns); err == nil {
+			err = operation_setting.ValidatePaymentCampaigns(campaigns, operation_setting.GetTopupPackages())
+		}
+		if err != nil {
+			common.ApiErrorMsg(c, "充值活动配置无效: "+err.Error())
 			return
 		}
 	}

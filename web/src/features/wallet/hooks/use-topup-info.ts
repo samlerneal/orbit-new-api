@@ -31,6 +31,7 @@ import type {
   PaymentMethod,
   WaffoPayMethod,
   TopupPackage,
+  TopupCampaign,
 } from '../types'
 
 // ============================================================================
@@ -136,8 +137,23 @@ function parseTopupPackages(data: unknown): TopupPackage[] {
       id: typeof item.id === 'string' ? item.id : '',
       name: typeof item.name === 'string' ? item.name : '',
       description: typeof item.description === 'string' ? item.description : '',
+      tag: typeof item.tag === 'string' ? item.tag : undefined,
       pay_amount: Number(item.pay_amount),
       credit_amount: Number(item.credit_amount),
+      display_credit_amount:
+        Number(item.display_credit_amount) || Number(item.credit_amount),
+      bonus_amount: Number(item.bonus_amount) || 0,
+      campaign_badges: parseJsonArray(item.campaign_badges)
+        .filter(
+          (badge): badge is Record<string, unknown> =>
+            !!badge && typeof badge === 'object'
+        )
+        .map((badge) => ({
+          campaign_id:
+            typeof badge.campaign_id === 'string' ? badge.campaign_id : '',
+          text: typeof badge.text === 'string' ? badge.text : '',
+        }))
+        .filter((badge) => badge.campaign_id && badge.text),
     }))
     .filter(
       (item) =>
@@ -148,6 +164,24 @@ function parseTopupPackages(data: unknown): TopupPackage[] {
         Number.isFinite(item.credit_amount) &&
         item.credit_amount > 0
     )
+}
+
+function parseCampaigns(data: unknown): TopupCampaign[] {
+  return parseJsonArray(data)
+    .filter(
+      (item): item is Record<string, unknown> =>
+        !!item && typeof item === 'object'
+    )
+    .map((item) => ({
+      id: typeof item.id === 'string' ? item.id : '',
+      title: typeof item.title === 'string' ? item.title : '',
+      description: typeof item.description === 'string' ? item.description : '',
+      badge_text: typeof item.badge_text === 'string' ? item.badge_text : '',
+      max_bonus: Number(item.max_bonus) || 0,
+      valid_days: Number(item.valid_days) || 0,
+      priority: Number(item.priority) || 0,
+    }))
+    .filter((item) => item.id && item.title)
 }
 
 function parseDiscountMap(data: unknown): Record<number, number> {
@@ -214,6 +248,7 @@ export function useTopupInfo() {
         amount_options: parseAmountOptions(response.data.amount_options),
         discount: parseDiscountMap(response.data.discount),
         topup_packages: parseTopupPackages(response.data.topup_packages),
+        campaigns: parseCampaigns(response.data.campaigns),
         promotion_enabled: response.data.promotion_enabled === true,
         creem_products: parseCreemProducts(response.data.creem_products),
         waffo_pay_methods: parseWaffoPayMethods(

@@ -91,6 +91,10 @@ func taskAdjustFunding(task *model.Task, delta int) error {
 	if taskIsSubscription(task) {
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
+	if task.PrivateData.BillingRequestId != "" {
+		return model.AdjustWalletConsumption(task.PrivateData.BillingRequestId, task.UserId, delta)
+	}
+	// 历史任务没有持久化钱包请求 ID，只能按旧逻辑调整永久余额。
 	if delta > 0 {
 		return model.DecreaseUserQuota(task.UserId, delta, false)
 	}
@@ -170,8 +174,14 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	}
 
 	// 1. 退还资金来源（钱包或订阅）
-	if err := taskAdjustFunding(task, -quota); err != nil {
-		logger.LogWarn(ctx, fmt.Sprintf("退还资金来源失败 task %s: %s", task.TaskID, err.Error()))
+	var fundingErr error
+	if !taskIsSubscription(task) && task.PrivateData.BillingRequestId != "" {
+		fundingErr = model.RefundWalletConsumption(task.PrivateData.BillingRequestId, task.UserId)
+	} else {
+		fundingErr = taskAdjustFunding(task, -quota)
+	}
+	if fundingErr != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("退还资金来源失败 task %s: %s", task.TaskID, fundingErr.Error()))
 		return false
 	}
 

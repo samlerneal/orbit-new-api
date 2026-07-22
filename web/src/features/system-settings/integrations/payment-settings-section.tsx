@@ -62,6 +62,7 @@ import { AmountDiscountVisualEditor } from './amount-discount-visual-editor'
 import { AmountOptionsVisualEditor } from './amount-options-visual-editor'
 import { CreemProductsVisualEditor } from './creem-products-visual-editor'
 import { PaymentMethodsVisualEditor } from './payment-methods-visual-editor'
+import { TopupRulesEditor } from './topup-rules-editor'
 import {
   formatJsonForEditor,
   getJsonError,
@@ -140,6 +141,14 @@ const paymentSchema = z.object({
         message: error,
       })
     }
+  }),
+  TopupPackages: z.string().superRefine((value, ctx) => {
+    const error = getJsonError(value, (parsed) => Array.isArray(parsed))
+    if (error) ctx.addIssue({ code: z.ZodIssueCode.custom, message: error })
+  }),
+  Campaigns: z.string().superRefine((value, ctx) => {
+    const error = getJsonError(value, (parsed) => Array.isArray(parsed))
+    if (error) ctx.addIssue({ code: z.ZodIssueCode.custom, message: error })
   }),
   StripeApiSecret: z.string(),
   StripeWebhookSecret: z.string(),
@@ -355,6 +364,8 @@ export function PaymentSettingsSection({
       PayMethods: formatJsonForEditor(initialFormValues.PayMethods),
       AmountOptions: formatJsonForEditor(initialFormValues.AmountOptions),
       AmountDiscount: formatJsonForEditor(initialFormValues.AmountDiscount),
+      TopupPackages: formatJsonForEditor(initialFormValues.TopupPackages),
+      Campaigns: formatJsonForEditor(initialFormValues.Campaigns),
       CreemProducts: formatJsonForEditor(initialFormValues.CreemProducts),
     },
   })
@@ -412,6 +423,8 @@ export function PaymentSettingsSection({
       PayMethods: formatJsonForEditor(parsedDefaults.PayMethods),
       AmountOptions: formatJsonForEditor(parsedDefaults.AmountOptions),
       AmountDiscount: formatJsonForEditor(parsedDefaults.AmountDiscount),
+      TopupPackages: formatJsonForEditor(parsedDefaults.TopupPackages),
+      Campaigns: formatJsonForEditor(parsedDefaults.Campaigns),
       CreemProducts: formatJsonForEditor(parsedDefaults.CreemProducts),
     })
   }, [defaultsSignature, form])
@@ -427,6 +440,8 @@ export function PaymentSettingsSection({
       PayMethods: values.PayMethods.trim(),
       AmountOptions: values.AmountOptions.trim(),
       AmountDiscount: values.AmountDiscount.trim(),
+      TopupPackages: values.TopupPackages.trim(),
+      Campaigns: values.Campaigns.trim(),
       StripeApiSecret: values.StripeApiSecret.trim(),
       StripeWebhookSecret: values.StripeWebhookSecret.trim(),
       StripePriceId: values.StripePriceId.trim(),
@@ -471,6 +486,8 @@ export function PaymentSettingsSection({
       PayMethods: initialRef.current.PayMethods.trim(),
       AmountOptions: initialRef.current.AmountOptions.trim(),
       AmountDiscount: initialRef.current.AmountDiscount.trim(),
+      TopupPackages: initialRef.current.TopupPackages.trim(),
+      Campaigns: initialRef.current.Campaigns.trim(),
       StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
       StripeWebhookSecret: initialRef.current.StripeWebhookSecret.trim(),
       StripePriceId: initialRef.current.StripePriceId.trim(),
@@ -559,6 +576,26 @@ export function PaymentSettingsSection({
       updates.push({
         key: 'payment_setting.amount_discount',
         value: sanitized.AmountDiscount,
+      })
+    }
+
+    if (
+      normalizeJsonForComparison(sanitized.TopupPackages) !==
+      normalizeJsonForComparison(initial.TopupPackages)
+    ) {
+      updates.push({
+        key: 'payment_setting.topup_packages',
+        value: sanitized.TopupPackages,
+      })
+    }
+
+    if (
+      normalizeJsonForComparison(sanitized.Campaigns) !==
+      normalizeJsonForComparison(initial.Campaigns)
+    ) {
+      updates.push({
+        key: 'payment_setting.campaigns',
+        value: sanitized.Campaigns,
       })
     }
 
@@ -1118,6 +1155,31 @@ export function PaymentSettingsSection({
                       </FormItem>
                     )}
                   />
+                </div>
+
+                <div className='border-t pt-6'>
+                  <TopupRulesEditor
+                    packagesValue={form.watch('TopupPackages')}
+                    campaignsValue={form.watch('Campaigns')}
+                    onPackagesChange={(value) =>
+                      setPaymentValue('TopupPackages', value)
+                    }
+                    onCampaignsChange={(value) =>
+                      setPaymentValue('Campaigns', value)
+                    }
+                  />
+                  <div className='mt-3 space-y-1'>
+                    {form.formState.errors.TopupPackages?.message && (
+                      <p className='text-destructive text-sm'>
+                        {form.formState.errors.TopupPackages.message}
+                      </p>
+                    )}
+                    {form.formState.errors.Campaigns?.message && (
+                      <p className='text-destructive text-sm'>
+                        {form.formState.errors.Campaigns.message}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </TabsContent>

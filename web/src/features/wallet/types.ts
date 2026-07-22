@@ -136,8 +136,14 @@ export interface TopupInfo {
   discount: Record<number, number>
   /** Server-approved fixed topup packages */
   topup_packages: TopupPackage[]
+  /** Currently visible topup campaigns */
+  campaigns: TopupCampaign[]
   /** Whether promotional credit amounts are active */
   promotion_enabled: boolean
+  /** Active expiring bonus quota */
+  bonus_balance_quota?: number
+  /** Nearest bonus expiry timestamp */
+  bonus_nearest_expires_at?: number
   /** Optional topup link for purchasing codes */
   topup_link?: string
   /** Whether Creem topup is enabled */
@@ -169,10 +175,28 @@ export interface TopupPackage {
   name: string
   /** Short usage description */
   description: string
+  /** Permanent package badge */
+  tag?: string
   /** Exact amount charged in RMB */
   pay_amount: number
   /** Exact amount credited in RMB */
   credit_amount: number
+  /** Total credit including currently eligible campaigns */
+  display_credit_amount: number
+  /** Expiring campaign credit included in display credit */
+  bonus_amount: number
+  /** Eligible campaign badges */
+  campaign_badges: Array<{ campaign_id: string; text: string }>
+}
+
+export interface TopupCampaign {
+  id: string
+  title: string
+  description: string
+  badge_text: string
+  max_bonus: number
+  valid_days: number
+  priority: number
 }
 
 /**
@@ -249,6 +273,12 @@ export interface UserWalletData {
   username: string
   /** Current quota balance */
   quota: number
+  /** Active expiring campaign quota */
+  bonus_quota?: number
+  /** Wallet quota plus active campaign quota */
+  total_quota?: number
+  /** Nearest campaign balance expiry timestamp */
+  bonus_nearest_expires_at?: number
   /** Total used quota */
   used_quota: number
   /** Total request count */
@@ -280,6 +310,10 @@ export interface TopupRecord {
   amount: number
   /** Exact raw quota credited for package-based orders */
   credit_quota?: number
+  /** Expiring campaign quota credited with this order */
+  bonus_credit_quota?: number
+  /** Earliest expiry for campaign quota credited with this order */
+  bonus_expires_at?: number
   /** Payment amount (actual money paid) */
   money: number
   /** Trade/order number */

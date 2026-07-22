@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -34,12 +35,66 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
-	topupPackages := make([]operation_setting.TopupPackage, 0)
+	userId := c.GetInt("id")
+	topupPackages := make([]gin.H, 0)
+	visibleCampaigns := make(map[string]gin.H)
 	for _, packageOption := range operation_setting.GetTopupPackages() {
 		resolvedPackage, ok := operation_setting.ResolveTopupPackage(packageOption.ID)
 		if ok {
-			topupPackages = append(topupPackages, resolvedPackage)
+			offers, err := model.ResolveCampaignOffers(userId, resolvedPackage, time.Now().Unix())
+			if err != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("读取充值活动失败 user_id=%d package_id=%s error=%q", userId, resolvedPackage.ID, err.Error()))
+				offers = nil
+			}
+			campaignBadges := make([]gin.H, 0, len(offers))
+			displayCredit := resolvedPackage.CreditAmount
+			for _, offer := range offers {
+				displayCredit += offer.BonusAmount
+				campaignBadges = append(campaignBadges, gin.H{
+					"campaign_id": offer.Campaign.ID,
+					"text":        offer.Campaign.BadgeText,
+				})
+				grossBonus := offer.TotalAmount - resolvedPackage.PayAmount
+				campaignInfo, exists := visibleCampaigns[offer.Campaign.ID]
+				if !exists || grossBonus > campaignInfo["max_bonus"].(float64) {
+					visibleCampaigns[offer.Campaign.ID] = gin.H{
+						"id":          offer.Campaign.ID,
+						"title":       offer.Campaign.BannerTitle,
+						"description": offer.Campaign.BannerText,
+						"badge_text":  offer.Campaign.BadgeText,
+						"max_bonus":   grossBonus,
+						"valid_days":  offer.Campaign.ValidDays,
+						"priority":    offer.Campaign.Priority,
+					}
+				}
+			}
+			topupPackages = append(topupPackages, gin.H{
+				"id":                    resolvedPackage.ID,
+				"name":                  resolvedPackage.Name,
+				"description":           resolvedPackage.Description,
+				"tag":                   resolvedPackage.Tag,
+				"pay_amount":            resolvedPackage.PayAmount,
+				"credit_amount":         resolvedPackage.CreditAmount,
+				"display_credit_amount": displayCredit,
+				"bonus_amount":          displayCredit - resolvedPackage.CreditAmount,
+				"campaign_badges":       campaignBadges,
+				"sort_order":            resolvedPackage.SortOrder,
+			})
 		}
+	}
+	sort.SliceStable(topupPackages, func(i, j int) bool {
+		return topupPackages[i]["sort_order"].(int) < topupPackages[j]["sort_order"].(int)
+	})
+	campaigns := make([]gin.H, 0, len(visibleCampaigns))
+	for _, campaign := range visibleCampaigns {
+		campaigns = append(campaigns, campaign)
+	}
+	sort.SliceStable(campaigns, func(i, j int) bool {
+		return campaigns[i]["priority"].(int) > campaigns[j]["priority"].(int)
+	})
+	bonusSummary, err := model.GetBonusBalanceSummary(userId)
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("读取活动余额失败 user_id=%d error=%q", userId, err.Error()))
 	}
 	enableWeChatTopup := isEpayTopUpEnabled() && len(payMethods) == 1
 
@@ -56,7 +111,10 @@ func GetTopUpInfo(c *gin.Context) {
 		"creem_products":                   nil,
 		"pay_methods":                      payMethods,
 		"topup_packages":                   topupPackages,
-		"promotion_enabled":                operation_setting.GetPaymentSetting().PromotionEnabled,
+		"campaigns":                        campaigns,
+		"promotion_enabled":                len(campaigns) > 0,
+		"bonus_balance_quota":              bonusSummary.ActiveQuota,
+		"bonus_nearest_expires_at":         bonusSummary.NearestExpiresAt,
 		"min_topup":                        operation_setting.MinTopUp,
 		"stripe_min_topup":                 setting.StripeMinTopUp,
 		"waffo_min_topup":                  setting.WaffoMinTopUp,
@@ -167,6 +225,12 @@ func RequestEpay(c *gin.Context) {
 
 	id := c.GetInt("id")
 	payMoney := decimal.NewFromFloat(packageOption.PayAmount).Round(2)
+	campaignSnapshots, err := model.BuildCampaignAwardSnapshots(id, packageOption, time.Now().Unix())
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("计算充值活动失败 user_id=%d package_id=%s error=%q", id, req.PackageID, err.Error()))
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值活动暂不可用，请稍后重试"})
+		return
+	}
 
 	callBackAddress := service.GetCallbackAddress()
 	returnUrl, _ := url.Parse(paymentReturnPath("/wallet?show_history=true"))
@@ -193,15 +257,17 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 	topUp := &model.TopUp{
-		UserId:          id,
-		Amount:          creditUSD.Round(0).IntPart(),
-		CreditQuota:     int64(creditQuota),
-		Money:           payMoney.InexactFloat64(),
-		TradeNo:         tradeNo,
-		PaymentMethod:   req.PaymentMethod,
-		PaymentProvider: model.PaymentProviderEpay,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+		UserId:           id,
+		PackageId:        packageOption.ID,
+		Amount:           creditUSD.Round(0).IntPart(),
+		CreditQuota:      int64(creditQuota),
+		CampaignSnapshot: model.EncodeCampaignAwardSnapshots(campaignSnapshots),
+		Money:            payMoney.InexactFloat64(),
+		TradeNo:          tradeNo,
+		PaymentMethod:    req.PaymentMethod,
+		PaymentProvider:  model.PaymentProviderEpay,
+		CreateTime:       time.Now().Unix(),
+		Status:           common.TopUpStatusPending,
 	}
 	err = topUp.Insert()
 	if err != nil {
@@ -382,6 +448,10 @@ func GetUserTopUps(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if err := model.EnrichTopUpsWithBonusExpiry(topups); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(topups)
@@ -404,6 +474,10 @@ func GetAllTopUps(c *gin.Context) {
 		topups, total, err = model.GetAllTopUps(pageInfo)
 	}
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.EnrichTopUpsWithBonusExpiry(topups); err != nil {
 		common.ApiError(c, err)
 		return
 	}

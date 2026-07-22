@@ -64,8 +64,22 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
               {t('Current Balance')}
             </div>
             <div className='mt-1 truncate font-mono text-2xl font-bold tracking-tight tabular-nums'>
-              {formatQuota(props.user?.quota ?? 0)}
+              {formatQuota(props.user?.total_quota ?? props.user?.quota ?? 0)}
             </div>
+            {(props.user?.bonus_quota ?? 0) > 0 && (
+              <div className='text-muted-foreground mt-1 text-xs'>
+                {t('Includes {{amount}} promotional balance', {
+                  amount: formatQuota(props.user?.bonus_quota ?? 0),
+                })}
+                {props.user?.bonus_nearest_expires_at
+                  ? ` · ${t('Nearest expiry: {{date}}', {
+                      date: new Date(
+                        props.user.bonus_nearest_expires_at * 1000
+                      ).toLocaleDateString(),
+                    })}`
+                  : ''}
+              </div>
+            )}
           </div>
         </div>
         <Button variant='outline' size='sm' onClick={props.onOpenBilling}>
