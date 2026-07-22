@@ -1,0 +1,104 @@
+name: Orbit verification and image
+
+on:
+  push:
+    branches:
+      - main
+      - codex/wallet-redesign
+  workflow_dispatch:
+
+concurrency:
+  group: orbit-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  verify:
+    name: Verify wallet and payment changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run payment tests
+        run: >-
+          go test ./setting/operation_setting ./model
+          -run 'TestResolveTopupPackage|TestCompleteEpayTopUp'
+          -count=1
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1'
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Check frontend types and formatting
+        working-directory: web
+        run: |
+          bun run typecheck
+          bun run format:check
+
+      - name: Build frontend
+        working-directory: web
+        env:
+          VITE_REACT_APP_VERSION: orbit-${{ github.sha }}
+        run: bun run build
+
+  publish:
+    name: Publish fixed amd64 image
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Write immutable version
+        run: echo "orbit-${GITHUB_SHA}" > VERSION
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:wallet-candidate
+          cache-from: type=gha,scope=orbit-amd64
+          cache-to: type=gha,mode=max,scope=orbit-amd64
+          provenance: mode=max
+          sbom: true
+
+      - name: Record deployment reference
+        run: |
+          echo "Image: ${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"
