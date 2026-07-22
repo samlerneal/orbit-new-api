@@ -27,7 +27,7 @@ type PaymentCampaignClaim struct {
 	CampaignId string  `json:"campaign_id" gorm:"type:varchar(64);index:idx_campaign_claim_user,priority:1;uniqueIndex:idx_campaign_topup,priority:1"`
 	UserId     int     `json:"user_id" gorm:"index:idx_campaign_claim_user,priority:2"`
 	PackageId  string  `json:"package_id" gorm:"type:varchar(64);index"`
-	TopUpId    int     `json:"topup_id" gorm:"uniqueIndex:idx_campaign_topup,priority:2"`
+	TopUpId    int     `json:"topup_id" gorm:"column:topup_id;uniqueIndex:idx_campaign_topup,priority:2"`
 	ClaimKey   *string `json:"claim_key,omitempty" gorm:"type:varchar(255);uniqueIndex"`
 	CreatedAt  int64   `json:"created_at" gorm:"bigint;index"`
 }
@@ -38,7 +38,7 @@ type BonusBalance struct {
 	Id          int    `json:"id"`
 	UserId      int    `json:"user_id" gorm:"index:idx_bonus_user_expiry,priority:1"`
 	CampaignId  string `json:"campaign_id" gorm:"type:varchar(64);index;uniqueIndex:idx_bonus_campaign_topup,priority:1"`
-	TopUpId     int    `json:"topup_id" gorm:"uniqueIndex:idx_bonus_campaign_topup,priority:2"`
+	TopUpId     int    `json:"topup_id" gorm:"column:topup_id;uniqueIndex:idx_bonus_campaign_topup,priority:2"`
 	AmountTotal int64  `json:"amount_total" gorm:"type:bigint;not null"`
 	AmountUsed  int64  `json:"amount_used" gorm:"type:bigint;not null;default:0"`
 	ExpiresAt   int64  `json:"expires_at" gorm:"type:bigint;index:idx_bonus_user_expiry,priority:2"`
