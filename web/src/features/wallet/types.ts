@@ -134,6 +134,10 @@ export interface TopupInfo {
   amount_options: number[]
   /** Discount rates by amount */
   discount: Record<number, number>
+  /** Server-approved fixed topup packages */
+  topup_packages: TopupPackage[]
+  /** Whether promotional credit amounts are active */
+  promotion_enabled: boolean
   /** Optional topup link for purchasing codes */
   topup_link?: string
   /** Whether Creem topup is enabled */
@@ -156,6 +160,19 @@ export interface TopupInfo {
   payment_compliance_confirmed?: boolean
   /** Current compliance terms version */
   payment_compliance_terms_version?: string
+}
+
+export interface TopupPackage {
+  /** Stable package identifier submitted to the server */
+  id: string
+  /** Display name */
+  name: string
+  /** Short usage description */
+  description: string
+  /** Exact amount charged in RMB */
+  pay_amount: number
+  /** Exact amount credited in RMB */
+  credit_amount: number
 }
 
 /**
@@ -181,7 +198,9 @@ export interface RedemptionRequest {
  */
 export interface PaymentRequest {
   /** Topup amount */
-  amount: number
+  amount?: number
+  /** Server-approved package identifier */
+  package_id?: string
   /** Payment method identifier */
   payment_method: string
 }
@@ -259,6 +278,8 @@ export interface TopupRecord {
   user_id: number
   /** Topup amount (quota) */
   amount: number
+  /** Exact raw quota credited for package-based orders */
+  credit_quota?: number
   /** Payment amount (actual money paid) */
   money: number
   /** Trade/order number */

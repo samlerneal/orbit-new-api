@@ -52,6 +52,10 @@
 
 </div>
 
+## Orbit Custom Build
+
+This repository includes an Orbit-specific wallet and WeChat Pay checkout customization. The upstream New API identity, authorship, notices, and AGPL-3.0 license remain unchanged. See [ORBIT_CUSTOMIZATIONS.md](./ORBIT_CUSTOMIZATIONS.md) for the exact scope and security notes.
+
 ## 📝 Project Description
 
 > [!IMPORTANT]

@@ -30,6 +30,7 @@ import type {
   CreemProduct,
   PaymentMethod,
   WaffoPayMethod,
+  TopupPackage,
 } from '../types'
 
 // ============================================================================
@@ -125,6 +126,30 @@ function parseAmountOptions(data: unknown): number[] {
     .filter((item) => Number.isFinite(item) && item > 0)
 }
 
+function parseTopupPackages(data: unknown): TopupPackage[] {
+  return parseJsonArray(data)
+    .filter(
+      (item): item is Record<string, unknown> =>
+        !!item && typeof item === 'object'
+    )
+    .map((item) => ({
+      id: typeof item.id === 'string' ? item.id : '',
+      name: typeof item.name === 'string' ? item.name : '',
+      description: typeof item.description === 'string' ? item.description : '',
+      pay_amount: Number(item.pay_amount),
+      credit_amount: Number(item.credit_amount),
+    }))
+    .filter(
+      (item) =>
+        item.id &&
+        item.name &&
+        Number.isFinite(item.pay_amount) &&
+        item.pay_amount > 0 &&
+        Number.isFinite(item.credit_amount) &&
+        item.credit_amount > 0
+    )
+}
+
 function parseDiscountMap(data: unknown): Record<number, number> {
   if (!data) {
     return {}
@@ -188,6 +213,8 @@ export function useTopupInfo() {
         ),
         amount_options: parseAmountOptions(response.data.amount_options),
         discount: parseDiscountMap(response.data.discount),
+        topup_packages: parseTopupPackages(response.data.topup_packages),
+        promotion_enabled: response.data.promotion_enabled === true,
         creem_products: parseCreemProducts(response.data.creem_products),
         waffo_pay_methods: parseWaffoPayMethods(
           response.data.waffo_pay_methods

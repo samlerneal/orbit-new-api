@@ -16,10 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Activity, BarChart3, WalletCards } from 'lucide-react'
+import { Receipt, WalletCards } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { IconBadge } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatQuota } from '@/lib/format'
 
@@ -28,75 +30,49 @@ import type { UserWalletData } from '../types'
 interface WalletStatsCardProps {
   user: UserWalletData | null
   loading?: boolean
+  onOpenBilling: () => void
 }
 
 export function WalletStatsCard(props: WalletStatsCardProps) {
   const { t } = useTranslation()
   if (props.loading) {
     return (
-      <div className='grid grid-cols-3 divide-x rounded-lg border'>
-        {['balance', 'usage', 'requests'].map((key) => (
-          <div key={key} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
-            <Skeleton className='h-3.5 w-full' />
-            <Skeleton className='mt-2 h-6 w-full sm:h-7' />
-            <Skeleton className='mt-1.5 hidden h-3.5 w-24 md:block' />
+      <Card data-card-hover='false'>
+        <CardContent className='flex items-center justify-between gap-4 p-4 sm:p-5'>
+          <div className='flex items-center gap-3'>
+            <Skeleton className='size-10 rounded-lg' />
+            <div>
+              <Skeleton className='h-4 w-24' />
+              <Skeleton className='mt-2 h-7 w-36' />
+            </div>
           </div>
-        ))}
-      </div>
+          <Skeleton className='h-9 w-24' />
+        </CardContent>
+      </Card>
     )
   }
 
-  const stats: {
-    label: string
-    value: string
-    description: string
-    icon: typeof WalletCards
-    tone: IconBadgeTone
-  }[] = [
-    {
-      label: t('Current Balance'),
-      value: formatQuota(props.user?.quota ?? 0),
-      description: t('Remaining quota'),
-      icon: WalletCards,
-      tone: 'success',
-    },
-    {
-      label: t('Total Usage'),
-      value: formatQuota(props.user?.used_quota ?? 0),
-      description: t('Total consumed quota'),
-      icon: BarChart3,
-      tone: 'info',
-    },
-    {
-      label: t('API Requests'),
-      value: (props.user?.request_count ?? 0).toLocaleString(),
-      description: t('Total requests made'),
-      icon: Activity,
-      tone: 'chart-4',
-    },
-  ]
-
   return (
-    <div className='grid grid-cols-3 divide-x rounded-lg border'>
-      {stats.map((item) => (
-        <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
-          <div className='flex items-center gap-1.5 sm:gap-2.5'>
-            <IconBadge tone={item.tone} size='stat'>
-              <item.icon />
-            </IconBadge>
-            <div className='text-muted-foreground truncate text-[11px] font-medium tracking-wider uppercase sm:text-xs'>
-              {item.label}
+    <Card data-card-hover='false'>
+      <CardContent className='flex items-center justify-between gap-4 p-4 sm:p-5'>
+        <div className='flex min-w-0 items-center gap-3'>
+          <IconBadge tone='success' size='stat'>
+            <WalletCards />
+          </IconBadge>
+          <div className='min-w-0'>
+            <div className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
+              {t('Current Balance')}
+            </div>
+            <div className='mt-1 truncate font-mono text-2xl font-bold tracking-tight tabular-nums'>
+              {formatQuota(props.user?.quota ?? 0)}
             </div>
           </div>
-
-          <div className='text-foreground mt-1.5 font-mono text-sm font-bold tracking-tight break-all tabular-nums sm:mt-2.5 sm:text-2xl'>
-            {item.value}
-          </div>
-          <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
-            {item.description}
-          </div>
         </div>
-      ))}
-    </div>
+        <Button variant='outline' size='sm' onClick={props.onOpenBilling}>
+          <Receipt className='size-4' />
+          <span className='hidden sm:inline'>{t('Order History')}</span>
+        </Button>
+      </CardContent>
+    </Card>
   )
 }

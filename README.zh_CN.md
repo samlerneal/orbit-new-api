@@ -52,6 +52,10 @@
 
 </div>
 
+## Orbit 定制版本
+
+本仓库包含 Orbit 钱包和微信支付流程的定制代码。New API 原项目名称、作者信息、声明和 AGPL-3.0 许可证保持不变。具体改动和安全说明见 [ORBIT_CUSTOMIZATIONS.md](./ORBIT_CUSTOMIZATIONS.md)。
+
 ## 📝 项目说明
 
 > [!IMPORTANT]

@@ -22,6 +22,7 @@ import {
   CreditCard,
   FileText,
   FlaskConical,
+  Gift,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -31,12 +32,12 @@ import {
   Settings,
   Ticket,
   User,
+  UserPlus,
   Users,
-  Wallet,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { type SidebarData } from '@/components/layout/types'
+import type { SidebarData } from '@/components/layout/types'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -104,9 +105,19 @@ export function useSidebarData(): SidebarData {
         title: t('Personal'),
         items: [
           {
-            title: t('Wallet'),
+            title: t('Top up / Subscribe'),
             url: '/wallet',
-            icon: Wallet,
+            icon: CreditCard,
+          },
+          {
+            title: t('Redeem'),
+            url: '/wallet/redeem',
+            icon: Gift,
+          },
+          {
+            title: t('Referral Rewards'),
+            url: '/wallet/referral',
+            icon: UserPlus,
           },
           {
             title: t('Profile'),

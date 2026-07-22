@@ -15,6 +15,7 @@ type TopUp struct {
 	Id              int     `json:"id"`
 	UserId          int     `json:"user_id" gorm:"index"`
 	Amount          int64   `json:"amount"`
+	CreditQuota     int64   `json:"credit_quota"`
 	Money           float64 `json:"money"`
 	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
@@ -43,9 +44,97 @@ const (
 
 var (
 	ErrPaymentMethodMismatch = errors.New("payment method mismatch")
+	ErrPaymentAmountMismatch = errors.New("payment amount mismatch")
 	ErrTopUpNotFound         = errors.New("topup not found")
 	ErrTopUpStatusInvalid    = errors.New("topup status invalid")
 )
+
+func getTopUpCreditQuota(topUp *TopUp) int {
+	if topUp.CreditQuota > 0 {
+		return int(topUp.CreditQuota)
+	}
+
+	dAmount := decimal.NewFromInt(topUp.Amount)
+	dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+	return common.QuotaFromDecimal(dAmount.Mul(dQuotaPerUnit))
+}
+
+func CompleteEpayTopUp(
+	tradeNo string,
+	paymentMethod string,
+	reportedMoney decimal.Decimal,
+	callerIP string,
+) error {
+	if tradeNo == "" {
+		return ErrTopUpNotFound
+	}
+
+	refCol := "`trade_no`"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		refCol = `"trade_no"`
+	}
+
+	var completedTopUp TopUp
+	var quotaToAdd int
+	credited := false
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		topUp := &TopUp{}
+		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
+			return ErrTopUpNotFound
+		}
+		if topUp.PaymentProvider != PaymentProviderEpay || topUp.PaymentMethod != paymentMethod {
+			return ErrPaymentMethodMismatch
+		}
+
+		expectedMoney := decimal.NewFromFloat(topUp.Money).Round(2)
+		if !expectedMoney.Equal(reportedMoney.Round(2)) {
+			return ErrPaymentAmountMismatch
+		}
+		if topUp.Status == common.TopUpStatusSuccess {
+			return nil
+		}
+		if topUp.Status != common.TopUpStatusPending {
+			return ErrTopUpStatusInvalid
+		}
+
+		quotaToAdd = getTopUpCreditQuota(topUp)
+		if quotaToAdd <= 0 {
+			return errors.New("invalid topup credit quota")
+		}
+
+		topUp.CompleteTime = common.GetTimestamp()
+		topUp.Status = common.TopUpStatusSuccess
+		if err := tx.Save(topUp).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+			return err
+		}
+
+		completedTopUp = *topUp
+		credited = true
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !credited {
+		return nil
+	}
+
+	if err := cacheIncrUserQuota(completedTopUp.UserId, int64(quotaToAdd)); err != nil {
+		common.SysLog("failed to increase user quota cache: " + err.Error())
+	}
+	RecordTopupLog(
+		completedTopUp.UserId,
+		fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%.2f", logger.LogQuota(quotaToAdd), completedTopUp.Money),
+		callerIP,
+		completedTopUp.PaymentMethod,
+		PaymentProviderEpay,
+	)
+	return nil
+}
 
 func (topUp *TopUp) Insert() error {
 	var err error
@@ -351,7 +440,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		// 计算应充值额度：
 		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
 		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
-		if topUp.PaymentProvider == PaymentProviderStripe {
+		if topUp.CreditQuota > 0 {
+			quotaToAdd = getTopUpCreditQuota(topUp)
+		} else if topUp.PaymentProvider == PaymentProviderStripe {
 			dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 			quotaToAdd = int(decimal.NewFromFloat(topUp.Money).Mul(dQuotaPerUnit).IntPart())
 		} else {
