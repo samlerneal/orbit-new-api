@@ -29,7 +29,12 @@ import { PackagePaymentDialog } from './components/dialogs/package-payment-dialo
 import { TopupPackageGrid } from './components/topup-package-grid'
 import { WalletStatsCard } from './components/wallet-stats-card'
 import { usePackagePayment, useTopupInfo } from './hooks'
-import type { TopupPackage, UserWalletData } from './types'
+import {
+  REFUND_NOTICE_VERSION,
+  type RefundNoticeAcceptance,
+  type TopupPackage,
+  type UserWalletData,
+} from './types'
 
 interface WalletProps {
   initialShowHistory?: boolean
@@ -76,10 +81,13 @@ export function Wallet(props: WalletProps) {
     setPaymentDialogOpen(true)
   }
 
-  const handlePay = async () => {
+  const handlePay = async (refundNotice: RefundNoticeAcceptance) => {
     if (!selectedPackage) return
 
-    const success = await processPackagePayment(selectedPackage.id)
+    const success = await processPackagePayment(
+      selectedPackage.id,
+      refundNotice
+    )
     if (success) {
       setPaymentDialogOpen(false)
     }
@@ -87,6 +95,7 @@ export function Wallet(props: WalletProps) {
 
   const paymentAvailable =
     topupInfo?.enable_online_topup === true &&
+    topupInfo.refund_notice_version === REFUND_NOTICE_VERSION &&
     topupInfo.pay_methods.some((method) => method.type === 'wxpay')
 
   return (
@@ -141,6 +150,7 @@ export function Wallet(props: WalletProps) {
         open={paymentDialogOpen}
         onOpenChange={setPaymentDialogOpen}
         packageOption={selectedPackage}
+        supportContacts={topupInfo?.support_contacts ?? []}
         processing={processing}
         onPay={handlePay}
       />

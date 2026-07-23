@@ -38,6 +38,32 @@ func (cm *ConfigManager) Get(name string) interface{} {
 	return cm.configs[name]
 }
 
+// Read runs reader while holding the manager read lock. Callers that need a
+// consistent snapshot must copy the required data inside reader rather than
+// retaining and later reading the registered pointer.
+func (cm *ConfigManager) Read(name string, reader func(config interface{})) bool {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	config, exists := cm.configs[name]
+	if !exists {
+		return false
+	}
+	reader(config)
+	return true
+}
+
+// Update atomically applies a partial update to a registered configuration.
+// It shares the same lock as Read, LoadFromDB and ExportAllConfigs.
+func (cm *ConfigManager) Update(name string, configMap map[string]string) (bool, error) {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	config, exists := cm.configs[name]
+	if !exists {
+		return false, nil
+	}
+	return true, updateConfigFromMap(config, configMap)
+}
+
 // LoadFromDB 从数据库加载配置
 func (cm *ConfigManager) LoadFromDB(options map[string]string) error {
 	cm.mutex.Lock()

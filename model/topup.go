@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -12,21 +13,24 @@ import (
 )
 
 type TopUp struct {
-	Id               int     `json:"id"`
-	UserId           int     `json:"user_id" gorm:"index"`
-	PackageId        string  `json:"package_id" gorm:"type:varchar(64);index"`
-	Amount           int64   `json:"amount"`
-	CreditQuota      int64   `json:"credit_quota"`
-	BonusCreditQuota int64   `json:"bonus_credit_quota"`
-	BonusExpiresAt   int64   `json:"bonus_expires_at" gorm:"-"`
-	CampaignSnapshot string  `json:"-" gorm:"type:text"`
-	Money            float64 `json:"money"`
-	TradeNo          string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod    string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider  string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime       int64   `json:"create_time"`
-	CompleteTime     int64   `json:"complete_time"`
-	Status           string  `json:"status"`
+	Id                     int     `json:"id"`
+	UserId                 int     `json:"user_id" gorm:"index"`
+	PackageId              string  `json:"package_id" gorm:"type:varchar(64);index"`
+	Amount                 int64   `json:"amount"`
+	CreditQuota            int64   `json:"credit_quota"`
+	BonusCreditQuota       int64   `json:"bonus_credit_quota"`
+	BonusExpiresAt         int64   `json:"bonus_expires_at" gorm:"-"`
+	CampaignSnapshot       string  `json:"-" gorm:"type:text"`
+	Money                  float64 `json:"money"`
+	TradeNo                string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod          string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider        string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	RefundNoticeVersion    string  `json:"refund_notice_version" gorm:"type:varchar(64);default:''"`
+	RefundNoticeAcceptedAt int64   `json:"refund_notice_accepted_at"`
+	RefundNoticeLanguage   string  `json:"refund_notice_language" gorm:"type:varchar(16);default:''"`
+	CreateTime             int64   `json:"create_time"`
+	CompleteTime           int64   `json:"complete_time"`
+	Status                 string  `json:"status"`
 }
 
 const (
@@ -53,6 +57,18 @@ var (
 	ErrTopUpStatusInvalid    = errors.New("topup status invalid")
 )
 
+const topUpCompletionLockCount = 256
+
+var topUpCompletionLocks [topUpCompletionLockCount]sync.Mutex
+
+func topUpCompletionLock(tradeNo string) *sync.Mutex {
+	var hash uint32
+	for index := 0; index < len(tradeNo); index++ {
+		hash = hash*33 + uint32(tradeNo[index])
+	}
+	return &topUpCompletionLocks[hash%topUpCompletionLockCount]
+}
+
 func getTopUpCreditQuota(topUp *TopUp) int {
 	if topUp.CreditQuota > 0 {
 		return int(topUp.CreditQuota)
@@ -72,6 +88,9 @@ func CompleteEpayTopUp(
 	if tradeNo == "" {
 		return ErrTopUpNotFound
 	}
+	completionLock := topUpCompletionLock(tradeNo)
+	completionLock.Lock()
+	defer completionLock.Unlock()
 
 	refCol := "`trade_no`"
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
@@ -199,6 +218,9 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 			return ErrTopUpStatusInvalid
 		}
 
+		if err := releaseTopUpCampaignReservationsTx(tx, topUp.Id, common.GetTimestamp()); err != nil {
+			return err
+		}
 		topUp.Status = targetStatus
 		return tx.Save(topUp).Error
 	})

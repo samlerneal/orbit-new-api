@@ -61,6 +61,22 @@ func DeleteKey(key string, purpose string) {
 	delete(verificationMap, purpose+key)
 }
 
+// DeleteVerificationCodeWithKey deletes the code only when it still matches
+// the code that was verified by the caller. This avoids deleting a newer code
+// issued for the same key while a previous request is finishing.
+func DeleteVerificationCodeWithKey(key string, code string, purpose string) bool {
+	verificationMutex.Lock()
+	defer verificationMutex.Unlock()
+
+	mapKey := purpose + key
+	value, okay := verificationMap[mapKey]
+	if !okay || value.code != code {
+		return false
+	}
+	delete(verificationMap, mapKey)
+	return true
+}
+
 // no lock inside, so the caller must lock the verificationMap before calling!
 func removeExpiredPairs() {
 	now := time.Now()

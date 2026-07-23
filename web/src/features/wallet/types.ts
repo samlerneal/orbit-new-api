@@ -166,6 +166,18 @@ export interface TopupInfo {
   payment_compliance_confirmed?: boolean
   /** Current compliance terms version */
   payment_compliance_terms_version?: string
+  /** Current refund notice version required for package payments */
+  refund_notice_version?: string
+  /** Customer-service contact methods shown with the refund notice */
+  support_contacts?: SupportContact[]
+}
+
+export type SupportContactType = 'qq' | 'wechat' | 'phone' | 'qrcode'
+
+export interface SupportContact {
+  id: string
+  type: SupportContactType
+  value: string
 }
 
 export interface TopupPackage {
@@ -227,6 +239,42 @@ export interface PaymentRequest {
   package_id?: string
   /** Payment method identifier */
   payment_method: string
+  /** Whether the user accepted the current refund notice */
+  refund_notice_accepted?: boolean
+  /** Version of the refund notice accepted by the user */
+  refund_notice_version?: string
+  /** Interface language used to display the refund notice */
+  refund_notice_language?: string
+}
+
+export const REFUND_NOTICE_VERSION = 'refund-notice-v1' as const
+
+export interface RefundNoticeAcceptance {
+  refund_notice_accepted: true
+  refund_notice_version: typeof REFUND_NOTICE_VERSION
+  refund_notice_language: string
+}
+
+export function canSubmitPackagePayment(
+  refundNoticeAccepted: boolean,
+  processing: boolean
+): boolean {
+  return refundNoticeAccepted && !processing
+}
+
+export function createPackagePaymentRequest(
+  packageId: string,
+  refundNotice: RefundNoticeAcceptance
+): PaymentRequest {
+  if (refundNotice.refund_notice_accepted !== true) {
+    throw new Error('Refund notice acceptance is required')
+  }
+
+  return {
+    package_id: packageId,
+    payment_method: 'wxpay',
+    ...refundNotice,
+  }
 }
 
 /**

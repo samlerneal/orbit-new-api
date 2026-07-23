@@ -144,6 +144,7 @@ const BILLING_SECTIONS = [
           AmountDiscount: settings['payment_setting.amount_discount'],
           TopupPackages: settings['payment_setting.topup_packages'],
           Campaigns: settings['payment_setting.campaigns'],
+          SupportContacts: settings['payment_setting.support_contacts'],
           StripeApiSecret: settings.StripeApiSecret,
           StripeWebhookSecret: settings.StripeWebhookSecret,
           StripePriceId: settings.StripePriceId,

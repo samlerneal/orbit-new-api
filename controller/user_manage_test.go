@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/authz"
 
@@ -158,4 +159,51 @@ func TestManageUserDeleteReturnsImmediatelyAndUnknownActionFails(t *testing.T) {
 	require.NoError(t, db.First(&unchanged, unchanged.Id).Error)
 	assert.EqualValues(t, 1, unchanged.AuthVersion)
 	assert.Equal(t, common.UserStatusEnabled, unchanged.Status)
+}
+
+func TestRegistrationAndEmailBindConsumeVerificationCode(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	previousEmailVerification := common.EmailVerificationEnabled
+	previousRegisterEnabled := common.RegisterEnabled
+	previousPasswordRegisterEnabled := common.PasswordRegisterEnabled
+	previousGenerateDefaultToken := constant.GenerateDefaultToken
+	common.EmailVerificationEnabled = true
+	common.RegisterEnabled = true
+	common.PasswordRegisterEnabled = true
+	constant.GenerateDefaultToken = false
+	t.Cleanup(func() {
+		common.EmailVerificationEnabled = previousEmailVerification
+		common.RegisterEnabled = previousRegisterEnabled
+		common.PasswordRegisterEnabled = previousPasswordRegisterEnabled
+		constant.GenerateDefaultToken = previousGenerateDefaultToken
+	})
+
+	registrationEmail := "student@example.com"
+	registrationCode := "123456"
+	common.RegisterVerificationCodeWithKey(registrationEmail, registrationCode, common.EmailVerificationPurpose)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/user/register", strings.NewReader(fmt.Sprintf(
+		`{"username":"registration-user","password":"Password123","email":"%s","verification_code":"%s"}`,
+		registrationEmail, registrationCode)))
+	context.Request.Header.Set("Content-Type", "application/json")
+	Register(context)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.False(t, common.VerifyCodeWithKey(registrationEmail, registrationCode, common.EmailVerificationPurpose))
+
+	var user model.User
+	require.NoError(t, db.Where("username = ?", "registration-user").First(&user).Error)
+	bindEmail := "bound@example.com"
+	bindCode := "654321"
+	common.RegisterVerificationCodeWithKey(bindEmail, bindCode, common.EmailVerificationPurpose)
+	recorder = httptest.NewRecorder()
+	context, _ = gin.CreateTestContext(recorder)
+	context.Set("id", user.Id)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/user/email/bind", strings.NewReader(fmt.Sprintf(
+		`{"email":" %s ","code":"%s"}`,
+		strings.ToUpper(bindEmail), bindCode)))
+	context.Request.Header.Set("Content-Type", "application/json")
+	EmailBind(context)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.False(t, common.VerifyCodeWithKey(bindEmail, bindCode, common.EmailVerificationPurpose))
 }

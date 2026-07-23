@@ -561,3 +561,36 @@ func TestSendEmailExplicitStartTLSRejectsUntrustedCertificateByDefault(t *testin
 	require.Error(t, err)
 	require.Contains(t, fmt.Sprint(err), "certificate")
 }
+
+func TestVerificationCodeConsumptionRequiresMatchingCode(t *testing.T) {
+	key := "verification-test-" + strings.ReplaceAll(t.Name(), "/", "-")
+	RegisterVerificationCodeWithKey(key, "123456", EmailVerificationPurpose)
+
+	asserted := DeleteVerificationCodeWithKey(key, "654321", EmailVerificationPurpose)
+	if asserted {
+		t.Fatal("mismatched verification code must not be consumed")
+	}
+	if !VerifyCodeWithKey(key, "123456", EmailVerificationPurpose) {
+		t.Fatal("valid verification code should remain usable after a mismatched delete")
+	}
+	if !DeleteVerificationCodeWithKey(key, "123456", EmailVerificationPurpose) {
+		t.Fatal("matching verification code should be consumed")
+	}
+	if VerifyCodeWithKey(key, "123456", EmailVerificationPurpose) {
+		t.Fatal("consumed verification code must not remain usable")
+	}
+}
+
+func TestExpiredVerificationCodeIsRejected(t *testing.T) {
+	previousValidMinutes := VerificationValidMinutes
+	VerificationValidMinutes = -1
+	t.Cleanup(func() {
+		VerificationValidMinutes = previousValidMinutes
+	})
+
+	key := "expired-verification-test-" + strings.ReplaceAll(t.Name(), "/", "-")
+	RegisterVerificationCodeWithKey(key, "123456", EmailVerificationPurpose)
+	if VerifyCodeWithKey(key, "123456", EmailVerificationPurpose) {
+		t.Fatal("expired verification code must be rejected")
+	}
+}

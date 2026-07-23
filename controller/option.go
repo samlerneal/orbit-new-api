@@ -116,6 +116,15 @@ func GetOptions(c *gin.Context) {
 	})
 }
 
+func GetPaymentCampaignStats(c *gin.Context) {
+	stats, err := model.GetPaymentCampaignClaimStats(common.GetTimestamp())
+	if err != nil {
+		common.ApiErrorMsg(c, "读取充值活动名额失败")
+		return
+	}
+	common.ApiSuccess(c, stats)
+}
+
 type OptionUpdateRequest struct {
 	Key   string `json:"key"`
 	Value any    `json:"value"`
@@ -351,6 +360,15 @@ func UpdateOption(c *gin.Context) {
 		}
 		if err != nil {
 			common.ApiErrorMsg(c, "充值活动配置无效: "+err.Error())
+			return
+		}
+	case "payment_setting.support_contacts":
+		var contacts []operation_setting.SupportContact
+		if err = json.Unmarshal([]byte(option.Value.(string)), &contacts); err == nil {
+			err = operation_setting.ValidateSupportContacts(contacts)
+		}
+		if err != nil {
+			common.ApiErrorMsg(c, "客服联系方式配置无效: "+err.Error())
 			return
 		}
 	}

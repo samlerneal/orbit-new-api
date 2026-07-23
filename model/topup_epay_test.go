@@ -30,10 +30,12 @@ func setupEpayTopupTestDB(t *testing.T) {
 		&User{},
 		&TopUp{},
 		&Log{},
+		&PaymentCampaignState{},
 		&PaymentCampaignClaim{},
 		&BonusBalance{},
 		&WalletConsumeRecord{},
 	))
+	require.NoError(t, ensurePaymentCampaignClaimIndexes(db))
 	DB, LOG_DB = db, db
 
 	sqlDB, err := db.DB()
@@ -103,4 +105,44 @@ func TestCompleteEpayTopUpRejectsAmountOrPaymentMethodMismatch(t *testing.T) {
 	var updatedTopUp TopUp
 	require.NoError(t, DB.First(&updatedTopUp, topUp.Id).Error)
 	assert.Equal(t, common.TopUpStatusPending, updatedTopUp.Status)
+}
+
+type legacyRefundNoticeTopUp struct {
+	Id      int    `gorm:"primaryKey"`
+	UserId  int    `gorm:"index"`
+	TradeNo string `gorm:"unique;type:varchar(255);index"`
+	Status  string
+}
+
+func (legacyRefundNoticeTopUp) TableName() string {
+	return "top_ups"
+}
+
+func TestTopUpRefundNoticeMigrationPreservesLegacyRows(t *testing.T) {
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
+
+	require.NoError(t, db.AutoMigrate(&legacyRefundNoticeTopUp{}))
+	legacy := legacyRefundNoticeTopUp{
+		UserId:  9,
+		TradeNo: "legacy-refund-notice-order",
+		Status:  common.TopUpStatusSuccess,
+	}
+	require.NoError(t, db.Create(&legacy).Error)
+
+	require.NoError(t, db.AutoMigrate(&TopUp{}))
+
+	var migrated TopUp
+	require.NoError(t, db.First(&migrated, legacy.Id).Error)
+	assert.Equal(t, legacy.TradeNo, migrated.TradeNo)
+	assert.Empty(t, migrated.RefundNoticeVersion)
+	assert.Zero(t, migrated.RefundNoticeAcceptedAt)
+	assert.Empty(t, migrated.RefundNoticeLanguage)
 }

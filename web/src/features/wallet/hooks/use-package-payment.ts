@@ -22,38 +22,44 @@ import { toast } from 'sonner'
 
 import { isApiSuccess, requestPayment } from '../api'
 import { submitPaymentForm } from '../lib'
+import {
+  createPackagePaymentRequest,
+  type RefundNoticeAcceptance,
+} from '../types'
 
 export function usePackagePayment() {
   const [processing, setProcessing] = useState(false)
 
-  const processPackagePayment = useCallback(async (packageId: string) => {
-    try {
-      setProcessing(true)
-      const response = await requestPayment({
-        package_id: packageId,
-        payment_method: 'wxpay',
-      })
+  const processPackagePayment = useCallback(
+    async (packageId: string, refundNotice: RefundNoticeAcceptance) => {
+      try {
+        setProcessing(true)
+        const response = await requestPayment(
+          createPackagePaymentRequest(packageId, refundNotice)
+        )
 
-      if (!isApiSuccess(response)) {
-        toast.error(response.message || i18next.t('Payment request failed'))
-        return false
-      }
+        if (!isApiSuccess(response)) {
+          toast.error(response.message || i18next.t('Payment request failed'))
+          return false
+        }
 
-      if (!response.data || !response.url) {
+        if (!response.data || !response.url) {
+          toast.error(i18next.t('Payment request failed'))
+          return false
+        }
+
+        submitPaymentForm(response.url, response.data)
+        toast.success(i18next.t('Redirecting to payment page...'))
+        return true
+      } catch {
         toast.error(i18next.t('Payment request failed'))
         return false
+      } finally {
+        setProcessing(false)
       }
-
-      submitPaymentForm(response.url, response.data)
-      toast.success(i18next.t('Redirecting to payment page...'))
-      return true
-    } catch {
-      toast.error(i18next.t('Payment request failed'))
-      return false
-    } finally {
-      setProcessing(false)
-    }
-  }, [])
+    },
+    []
+  )
 
   return { processing, processPackagePayment }
 }

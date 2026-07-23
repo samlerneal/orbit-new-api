@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,6 +109,8 @@ func GetTopUpInfo(c *gin.Context) {
 		"enable_redemption":                complianceConfirmed,
 		"payment_compliance_confirmed":     complianceConfirmed,
 		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
+		"refund_notice_version":            operation_setting.CurrentRefundNoticeVersion,
+		"support_contacts":                 operation_setting.GetSupportContacts(),
 		"waffo_pay_methods":                nil,
 		"creem_products":                   nil,
 		"pay_methods":                      payMethods,
@@ -127,12 +131,45 @@ func GetTopUpInfo(c *gin.Context) {
 }
 
 type EpayRequest struct {
-	PackageID     string `json:"package_id"`
-	PaymentMethod string `json:"payment_method"`
+	PackageID            string `json:"package_id"`
+	PaymentMethod        string `json:"payment_method"`
+	RefundNoticeAccepted bool   `json:"refund_notice_accepted"`
+	RefundNoticeVersion  string `json:"refund_notice_version"`
+	RefundNoticeLanguage string `json:"refund_notice_language"`
 }
 
 type AmountRequest struct {
 	Amount int64 `json:"amount"`
+}
+
+var supportedRefundNoticeLanguages = map[string]struct{}{
+	"en":   {},
+	"fr":   {},
+	"ja":   {},
+	"ru":   {},
+	"vi":   {},
+	"zhCN": {},
+	"zhTW": {},
+}
+
+func validateRefundNoticeAcceptance(req EpayRequest) error {
+	if !req.RefundNoticeAccepted {
+		return errors.New("请阅读并同意当前充值退款说明")
+	}
+	if strings.TrimSpace(req.RefundNoticeVersion) != operation_setting.CurrentRefundNoticeVersion {
+		return errors.New("充值退款说明已更新，请刷新页面后重新确认")
+	}
+	language := strings.TrimSpace(req.RefundNoticeLanguage)
+	if _, ok := supportedRefundNoticeLanguages[language]; !ok {
+		return errors.New("充值退款说明语言无效，请刷新页面后重试")
+	}
+	return nil
+}
+
+func recordRefundNoticeAcceptance(topUp *model.TopUp, req EpayRequest, acceptedAt int64) {
+	topUp.RefundNoticeVersion = operation_setting.CurrentRefundNoticeVersion
+	topUp.RefundNoticeAcceptedAt = acceptedAt
+	topUp.RefundNoticeLanguage = strings.TrimSpace(req.RefundNoticeLanguage)
 }
 
 func GetEpayClient() *epay.Client {
@@ -196,6 +233,10 @@ func RequestEpay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "参数错误"})
 		return
 	}
+	if err := validateRefundNoticeAcceptance(req); err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
 	packageOption, ok := operation_setting.ResolveTopupPackage(req.PackageID)
 	if !ok {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值档位不存在"})
@@ -224,8 +265,9 @@ func RequestEpay(c *gin.Context) {
 	}
 
 	id := c.GetInt("id")
+	now := time.Now().Unix()
 	payMoney := decimal.NewFromFloat(packageOption.PayAmount).Round(2)
-	campaignSnapshots, err := model.BuildCampaignAwardSnapshots(id, packageOption, time.Now().Unix())
+	campaignSnapshots, err := model.BuildCampaignAwardSnapshots(id, packageOption, now)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("计算充值活动失败 user_id=%d package_id=%s error=%q", id, req.PackageID, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值活动暂不可用，请稍后重试"})
@@ -266,16 +308,21 @@ func RequestEpay(c *gin.Context) {
 		TradeNo:          tradeNo,
 		PaymentMethod:    req.PaymentMethod,
 		PaymentProvider:  model.PaymentProviderEpay,
-		CreateTime:       time.Now().Unix(),
+		CreateTime:       now,
 		Status:           common.TopUpStatusPending,
 	}
-	err = topUp.Insert()
+	recordRefundNoticeAcceptance(topUp, req, now)
+	err = model.CreateTopUpWithCampaignReservations(topUp, campaignSnapshots, now)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 创建充值订单失败 user_id=%d trade_no=%s payment_method=%s package_id=%s error=%q", id, tradeNo, req.PaymentMethod, req.PackageID, err.Error()))
+		if errors.Is(err, model.ErrCampaignReservationUnavailable) {
+			c.JSON(http.StatusOK, gin.H{"message": "error", "data": "活动名额刚刚发生变化，请刷新页面后重新确认"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
 		return
 	}
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值订单创建成功 user_id=%d trade_no=%s payment_method=%s package_id=%s credit_quota=%d money=%s uri=%q params=%q", id, tradeNo, req.PaymentMethod, req.PackageID, creditQuota, payMoney.StringFixed(2), uri, common.GetJsonString(params)))
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值订单创建成功 user_id=%d trade_no=%s payment_method=%s package_id=%s credit_quota=%d money=%s refund_notice_version=%s refund_notice_language=%s refund_notice_accepted_at=%d uri=%q params=%q", id, tradeNo, req.PaymentMethod, req.PackageID, creditQuota, payMoney.StringFixed(2), topUp.RefundNoticeVersion, topUp.RefundNoticeLanguage, topUp.RefundNoticeAcceptedAt, uri, common.GetJsonString(params)))
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": params, "url": uri})
 }
 

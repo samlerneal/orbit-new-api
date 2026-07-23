@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -27,6 +28,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { api } from '@/lib/api'
 
 type TopupPackageRule = {
   id: string
@@ -37,6 +39,12 @@ type TopupPackageRule = {
   credit_amount: number
   enabled: boolean
   sort_order: number
+}
+
+type SupportContactRule = {
+  id: string
+  type: 'qq' | 'wechat' | 'phone' | 'qrcode'
+  value: string
 }
 
 type CampaignRule = {
@@ -51,6 +59,9 @@ type CampaignRule = {
   package_ids: string[]
   eligibility: 'per_campaign' | 'per_package' | 'unlimited'
   max_claims_per_user: number
+  max_claims_per_email: number
+  max_claims_total: number
+  reservation_minutes: number
   reward_mode: 'target_total_percent' | 'fixed_bonus'
   reward_percent: number
   fixed_bonus: Record<string, number>
@@ -60,12 +71,42 @@ type CampaignRule = {
   priority: number
 }
 
+type CampaignStats = {
+  campaign_id: string
+  limited: boolean
+  total: number
+  awarded: number
+  reserved: number
+  remaining: number
+}
+
+type CampaignStatsResponse = {
+  success: boolean
+  message: string
+  data: CampaignStats[]
+}
+
+const DEFAULT_MAX_CLAIMS_PER_EMAIL = 1
+const DEFAULT_MAX_CLAIMS_TOTAL = 100
+const DEFAULT_RESERVATION_MINUTES = 3
+
 function parseArray<T>(value: string): T[] {
   try {
     const parsed = JSON.parse(value || '[]')
     return Array.isArray(parsed) ? (parsed as T[]) : []
   } catch {
     return []
+  }
+}
+
+function normalizeCampaign(campaign: CampaignRule): CampaignRule {
+  return {
+    ...campaign,
+    max_claims_per_email:
+      campaign.max_claims_per_email ?? DEFAULT_MAX_CLAIMS_PER_EMAIL,
+    max_claims_total: campaign.max_claims_total ?? DEFAULT_MAX_CLAIMS_TOTAL,
+    reservation_minutes:
+      campaign.reservation_minutes ?? DEFAULT_RESERVATION_MINUTES,
   }
 }
 
@@ -85,15 +126,19 @@ function fromDateTimeLocal(value: string) {
 type TopupRulesEditorProps = {
   packagesValue: string
   campaignsValue: string
+  supportContactsValue: string
   onPackagesChange: (value: string) => void
   onCampaignsChange: (value: string) => void
+  onSupportContactsChange: (value: string) => void
 }
 
 export function TopupRulesEditor({
   packagesValue,
   campaignsValue,
+  supportContactsValue,
   onPackagesChange,
   onCampaignsChange,
+  onSupportContactsChange,
 }: TopupRulesEditorProps) {
   const { t } = useTranslation()
   const packages = useMemo(
@@ -101,8 +146,31 @@ export function TopupRulesEditor({
     [packagesValue]
   )
   const campaigns = useMemo(
-    () => parseArray<CampaignRule>(campaignsValue),
+    () => parseArray<CampaignRule>(campaignsValue).map(normalizeCampaign),
     [campaignsValue]
+  )
+  const supportContacts = useMemo(
+    () => parseArray<SupportContactRule>(supportContactsValue),
+    [supportContactsValue]
+  )
+  const { data: campaignStats = [] } = useQuery({
+    queryKey: ['payment-campaign-stats'],
+    queryFn: async () => {
+      const response = await api.get<CampaignStatsResponse>(
+        '/api/option/payment-campaigns/stats'
+      )
+      if (!response.data.success) {
+        throw new Error(
+          response.data.message || 'Failed to load campaign stats'
+        )
+      }
+      return response.data.data ?? []
+    },
+    retry: false,
+  })
+  const campaignStatsById = useMemo(
+    () => new Map(campaignStats.map((stats) => [stats.campaign_id, stats])),
+    [campaignStats]
   )
 
   const updatePackage = (index: number, patch: Partial<TopupPackageRule>) => {
@@ -117,6 +185,30 @@ export function TopupRulesEditor({
       itemIndex === index ? { ...item, ...patch } : item
     )
     onCampaignsChange(JSON.stringify(next, null, 2))
+  }
+
+  const updateSupportContact = (
+    index: number,
+    patch: Partial<SupportContactRule>
+  ) => {
+    const next = supportContacts.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, ...patch } : item
+    )
+    onSupportContactsChange(JSON.stringify(next, null, 2))
+  }
+
+  const addSupportContact = () => {
+    if (supportContacts.length >= 8) return
+    onSupportContactsChange(
+      JSON.stringify(
+        [
+          ...supportContacts,
+          { id: `support-${Date.now()}`, type: 'qq', value: '' },
+        ],
+        null,
+        2
+      )
+    )
   }
 
   const addCampaign = () => {
@@ -135,6 +227,9 @@ export function TopupRulesEditor({
         package_ids: packages.map((item) => item.id),
         eligibility: 'per_campaign',
         max_claims_per_user: 1,
+        max_claims_per_email: DEFAULT_MAX_CLAIMS_PER_EMAIL,
+        max_claims_total: DEFAULT_MAX_CLAIMS_TOTAL,
+        reservation_minutes: DEFAULT_RESERVATION_MINUTES,
         reward_mode: 'target_total_percent',
         reward_percent: 10,
         fixed_bonus: {},
@@ -168,6 +263,87 @@ export function TopupRulesEditor({
 
   return (
     <div className='space-y-6'>
+      <div className='space-y-3'>
+        <div className='flex items-start justify-between gap-3'>
+          <div>
+            <h4 className='font-medium'>{t('Customer service contacts')}</h4>
+            <p className='text-muted-foreground text-sm'>
+              {t(
+                'Shown in the refund notice. Leaving the list empty does not disable payment.'
+              )}
+            </p>
+          </div>
+          <Button
+            type='button'
+            variant='outline'
+            disabled={supportContacts.length >= 8}
+            onClick={addSupportContact}
+          >
+            <Plus className='size-4' />
+            {t('Add contact')}
+          </Button>
+        </div>
+        {supportContacts.length === 0 && (
+          <div className='text-muted-foreground rounded-lg border border-dashed p-6 text-center text-sm'>
+            {t('No customer service contact configured.')}
+          </div>
+        )}
+        <div className='space-y-2'>
+          {supportContacts.map((contact, index) => (
+            <div
+              key={contact.id}
+              className='grid gap-2 rounded-lg border p-3 sm:grid-cols-[160px_1fr_auto]'
+            >
+              <select
+                aria-label={t('Contact type')}
+                className='border-input bg-background h-9 w-full rounded-md border px-3 text-sm'
+                value={contact.type}
+                onChange={(event) =>
+                  updateSupportContact(index, {
+                    type: event.target.value as SupportContactRule['type'],
+                  })
+                }
+              >
+                <option value='qq'>{t('QQ')}</option>
+                <option value='wechat'>{t('WeChat')}</option>
+                <option value='phone'>{t('Phone number')}</option>
+                <option value='qrcode'>{t('QR code image')}</option>
+              </select>
+              <Input
+                value={contact.value}
+                placeholder={
+                  contact.type === 'qrcode'
+                    ? t('HTTPS image URL')
+                    : t('Contact account or number')
+                }
+                onChange={(event) =>
+                  updateSupportContact(index, { value: event.target.value })
+                }
+              />
+              <Button
+                type='button'
+                size='icon'
+                variant='ghost'
+                aria-label={t('Delete contact')}
+                onClick={() =>
+                  onSupportContactsChange(
+                    JSON.stringify(
+                      supportContacts.filter(
+                        (_item, itemIndex) => itemIndex !== index
+                      ),
+                      null,
+                      2
+                    )
+                  )
+                }
+              >
+                <Trash2 className='size-4' />
+              </Button>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className='space-y-3'>
         <div className='flex items-start justify-between gap-3'>
           <div>
@@ -415,7 +591,7 @@ export function TopupRulesEditor({
                   <option value='unlimited'>{t('Unlimited')}</option>
                 </select>
               </Field>
-              <Field label={t('Maximum claims per user')}>
+              <Field label={t('Maximum claims per account (0 = unlimited)')}>
                 <Input
                   type='number'
                   min={0}
@@ -428,6 +604,54 @@ export function TopupRulesEditor({
                   }
                 />
               </Field>
+              <Field
+                label={t('Maximum claims per verified email (0 = unlimited)')}
+              >
+                <Input
+                  type='number'
+                  min={0}
+                  step={1}
+                  value={campaign.max_claims_per_email}
+                  onChange={(event) =>
+                    updateCampaign(index, {
+                      max_claims_per_email: Math.max(
+                        0,
+                        Number(event.target.value)
+                      ),
+                    })
+                  }
+                />
+              </Field>
+              <Field label={t('Total campaign slots (0 = unlimited)')}>
+                <Input
+                  type='number'
+                  min={0}
+                  step={1}
+                  value={campaign.max_claims_total}
+                  onChange={(event) =>
+                    updateCampaign(index, {
+                      max_claims_total: Math.max(0, Number(event.target.value)),
+                    })
+                  }
+                />
+              </Field>
+              <Field label={t('Slot reservation duration (minutes)')}>
+                <Input
+                  type='number'
+                  min={1}
+                  step={1}
+                  value={campaign.reservation_minutes}
+                  onChange={(event) =>
+                    updateCampaign(index, {
+                      reservation_minutes: Math.max(
+                        1,
+                        Number(event.target.value)
+                      ),
+                    })
+                  }
+                />
+              </Field>
+              <CampaignStatsPanel stats={campaignStatsById.get(campaign.id)} />
               <Field label={t('Reward calculation')}>
                 <select
                   className='border-input bg-background h-9 w-full rounded-md border px-3 text-sm'
@@ -552,6 +776,43 @@ export function TopupRulesEditor({
           </Card>
         ))}
       </div>
+    </div>
+  )
+}
+
+function CampaignStatsPanel({ stats }: { stats?: CampaignStats }) {
+  const { t } = useTranslation()
+  let totalSlots: number | string = '—'
+  let remainingSlots: number | string = '—'
+  if (stats) {
+    totalSlots = stats.limited ? stats.total : t('Unlimited')
+    remainingSlots = stats.limited ? stats.remaining : t('Unlimited')
+  }
+
+  return (
+    <div className='grid grid-cols-2 gap-3 rounded-md border p-3 md:col-span-2 lg:grid-cols-4'>
+      <CampaignStat label={t('Total slots')} value={totalSlots} />
+      <CampaignStat label={t('Used slots')} value={stats?.awarded ?? '—'} />
+      <CampaignStat
+        label={t('Payments in progress')}
+        value={stats?.reserved ?? '—'}
+      />
+      <CampaignStat label={t('Remaining slots')} value={remainingSlots} />
+    </div>
+  )
+}
+
+function CampaignStat({
+  label,
+  value,
+}: {
+  label: string
+  value: number | string
+}) {
+  return (
+    <div>
+      <div className='text-muted-foreground text-xs'>{label}</div>
+      <div className='mt-1 text-lg font-semibold'>{value}</div>
     </div>
   )
 }

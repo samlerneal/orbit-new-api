@@ -16,10 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Loader2 } from 'lucide-react'
+import { ChevronDown, Loader2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import {
   Dialog,
   DialogContent,
@@ -27,22 +34,65 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import { normalizeInterfaceLanguage } from '@/i18n/languages'
 import { formatLocalCurrencyAmount } from '@/lib/currency'
 
 import { getPaymentIcon } from '../../lib'
-import type { TopupPackage } from '../../types'
+import {
+  canSubmitPackagePayment,
+  REFUND_NOTICE_VERSION,
+  type RefundNoticeAcceptance,
+  type SupportContact,
+  type TopupPackage,
+} from '../../types'
 
 interface PackagePaymentDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   packageOption: TopupPackage | null
+  supportContacts: SupportContact[]
   processing: boolean
-  onPay: () => void
+  onPay: (refundNotice: RefundNoticeAcceptance) => void | Promise<void>
+}
+
+function getSupportContactLabel(type: SupportContact['type']) {
+  switch (type) {
+    case 'qq':
+      return 'Customer service QQ'
+    case 'wechat':
+      return 'Customer service WeChat'
+    case 'phone':
+      return 'Customer service phone'
+    case 'qrcode':
+      return 'Customer service QR code'
+  }
 }
 
 export function PackagePaymentDialog(props: PackagePaymentDialogProps) {
-  const { t } = useTranslation()
+  const { i18n, t } = useTranslation()
   const packageOption = props.packageOption
+  const [refundNoticeAccepted, setRefundNoticeAccepted] = useState(false)
+  const [refundNoticeExpanded, setRefundNoticeExpanded] = useState(false)
+
+  useEffect(() => {
+    setRefundNoticeAccepted(false)
+    setRefundNoticeExpanded(false)
+  }, [packageOption?.id, props.open])
+
+  const handlePay = () => {
+    if (!canSubmitPackagePayment(refundNoticeAccepted, props.processing)) {
+      return
+    }
+
+    props.onPay({
+      refund_notice_accepted: true,
+      refund_notice_version: REFUND_NOTICE_VERSION,
+      refund_notice_language: normalizeInterfaceLanguage(
+        i18n.resolvedLanguage || i18n.language
+      ),
+    })
+  }
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -78,13 +128,90 @@ export function PackagePaymentDialog(props: PackagePaymentDialogProps) {
               {t('RMB payment')}
             </div>
 
+            <div className='space-y-3 rounded-xl border border-blue-200 bg-blue-50/60 p-4 dark:border-blue-900 dark:bg-blue-950/20'>
+              <div className='text-sm font-semibold'>{t('Refund notice')}</div>
+              <p className='text-muted-foreground text-sm leading-6'>
+                {t(
+                  'Refund summary: Request a full refund within 7 days if no billable API use occurred.'
+                )}
+              </p>
+              <Collapsible
+                open={refundNoticeExpanded}
+                onOpenChange={setRefundNoticeExpanded}
+              >
+                <CollapsibleTrigger className='hover:bg-background/70 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm font-medium'>
+                  <span>
+                    {refundNoticeExpanded
+                      ? t('Hide full refund notice')
+                      : t('View full refund notice')}
+                  </span>
+                  <ChevronDown
+                    className={`size-4 transition-transform ${refundNoticeExpanded ? 'rotate-180' : ''}`}
+                  />
+                </CollapsibleTrigger>
+                <CollapsibleContent className='text-muted-foreground space-y-3 px-1 pt-3 text-sm leading-6'>
+                  <p>{t('Refund notice paragraph 1')}</p>
+                  <p>{t('Refund notice paragraph 2')}</p>
+                  <p>{t('Refund notice paragraph 3')}</p>
+                  {props.supportContacts.length > 0 && (
+                    <div className='bg-background/70 space-y-2 rounded-lg border p-3'>
+                      <div className='text-foreground font-medium'>
+                        {t('Customer service')}
+                      </div>
+                      {props.supportContacts.map((contact) =>
+                        contact.type === 'qrcode' ? (
+                          <div key={contact.id} className='space-y-2'>
+                            <div>{t('Customer service QR code')}</div>
+                            <img
+                              src={contact.value}
+                              alt={t('Customer service QR code')}
+                              className='size-36 rounded-lg border object-contain'
+                              loading='lazy'
+                              referrerPolicy='no-referrer'
+                            />
+                          </div>
+                        ) : (
+                          <div key={contact.id} className='break-all'>
+                            {t(getSupportContactLabel(contact.type))}：
+                            {contact.value}
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+              <div className='bg-background/60 flex items-start gap-3 rounded-lg border px-3 py-3'>
+                <Checkbox
+                  id='package-payment-refund-notice'
+                  checked={refundNoticeAccepted}
+                  disabled={props.processing}
+                  onCheckedChange={(checked) =>
+                    setRefundNoticeAccepted(checked === true)
+                  }
+                  className='mt-0.5'
+                />
+                <Label
+                  htmlFor='package-payment-refund-notice'
+                  className='cursor-pointer text-left text-sm leading-5 font-normal'
+                >
+                  {t('I have read and agree to the refund notice')}
+                </Label>
+              </div>
+            </div>
+
             <div className='space-y-2'>
               <div className='text-sm font-medium'>{t('Payment Method')}</div>
               <Button
                 variant='outline'
                 className='h-14 w-full justify-center gap-3 rounded-xl text-base'
-                onClick={props.onPay}
-                disabled={props.processing}
+                onClick={handlePay}
+                disabled={
+                  !canSubmitPackagePayment(
+                    refundNoticeAccepted,
+                    props.processing
+                  )
+                }
               >
                 {props.processing ? (
                   <Loader2 className='size-5 animate-spin' />

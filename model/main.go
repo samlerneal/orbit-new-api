@@ -282,6 +282,7 @@ func migrateDB() error {
 		&Log{},
 		&Midjourney{},
 		&TopUp{},
+		&PaymentCampaignState{},
 		&PaymentCampaignClaim{},
 		&BonusBalance{},
 		&WalletConsumeRecord{},
@@ -307,6 +308,9 @@ func migrateDB() error {
 		&AuthzRole{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := ensurePaymentCampaignClaimIndexes(DB); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
@@ -348,6 +352,7 @@ func migrateDBFast() error {
 		{&Log{}, "Log"},
 		{&Midjourney{}, "Midjourney"},
 		{&TopUp{}, "TopUp"},
+		{&PaymentCampaignState{}, "PaymentCampaignState"},
 		{&PaymentCampaignClaim{}, "PaymentCampaignClaim"},
 		{&BonusBalance{}, "BonusBalance"},
 		{&WalletConsumeRecord{}, "WalletConsumeRecord"},
@@ -392,6 +397,9 @@ func migrateDBFast() error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := ensurePaymentCampaignClaimIndexes(DB); err != nil {
+		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err

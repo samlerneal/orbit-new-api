@@ -184,6 +184,29 @@ function parseCampaigns(data: unknown): TopupCampaign[] {
     .filter((item) => item.id && item.title)
 }
 
+function parseSupportContacts(data: unknown): TopupInfo['support_contacts'] {
+  if (!Array.isArray(data)) return []
+  const supportedTypes = new Set(['qq', 'wechat', 'phone', 'qrcode'])
+  return data.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const id = String((item as { id?: unknown }).id ?? '').trim()
+    const type = String((item as { type?: unknown }).type ?? '')
+      .trim()
+      .toLowerCase()
+    const value = String((item as { value?: unknown }).value ?? '').trim()
+    if (!id || !supportedTypes.has(type) || !value) return []
+    return [
+      {
+        id,
+        type: type as NonNullable<
+          TopupInfo['support_contacts']
+        >[number]['type'],
+        value,
+      },
+    ]
+  })
+}
+
 function parseDiscountMap(data: unknown): Record<number, number> {
   if (!data) {
     return {}
@@ -249,6 +272,7 @@ export function useTopupInfo() {
         discount: parseDiscountMap(response.data.discount),
         topup_packages: parseTopupPackages(response.data.topup_packages),
         campaigns: parseCampaigns(response.data.campaigns),
+        support_contacts: parseSupportContacts(response.data.support_contacts),
         promotion_enabled: response.data.promotion_enabled === true,
         creem_products: parseCreemProducts(response.data.creem_products),
         waffo_pay_methods: parseWaffoPayMethods(
