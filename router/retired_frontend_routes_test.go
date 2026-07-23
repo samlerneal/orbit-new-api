@@ -20,7 +20,15 @@ func TestRetiredFrontendAPIRoutes(t *testing.T) {
 	_, hasAsyncCleanup := routes[http.MethodPost+" /api/system-task/log-cleanup"]
 	_, hasDirectDelete := routes[http.MethodDelete+" /api/log/"]
 	_, hasConsoleMigration := routes[http.MethodPost+" /api/option/migrate_console_setting"]
+	_, hasStripeWebhook := routes[http.MethodPost+" /api/stripe/webhook"]
+	_, hasStripeTopUp := routes[http.MethodPost+" /api/user/stripe/pay"]
+	_, hasStripeAmount := routes[http.MethodPost+" /api/user/stripe/amount"]
+	_, hasStripeSubscription := routes[http.MethodPost+" /api/subscription/stripe/pay"]
 	assert.True(t, hasAsyncCleanup)
 	assert.False(t, hasDirectDelete)
 	assert.False(t, hasConsoleMigration)
+	assert.False(t, hasStripeWebhook)
+	assert.False(t, hasStripeTopUp)
+	assert.False(t, hasStripeAmount)
+	assert.False(t, hasStripeSubscription)
 }

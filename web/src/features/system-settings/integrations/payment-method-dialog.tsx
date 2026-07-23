@@ -98,12 +98,6 @@ export function PaymentMethodDialog({
       value: 'wxpay',
     },
     {
-      iconName: 'SiStripe',
-      label: `${t('Stripe')} (stripe)`,
-      name: t('Stripe'),
-      value: 'stripe',
-    },
-    {
       iconName: 'LuCreditCard',
       label: 'Waffo Pancake (waffo_pancake)',
       name: 'Waffo Pancake',

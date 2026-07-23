@@ -314,6 +314,9 @@ func InitResources() error {
 		if err := model.MigrateRetiredFrontendOptions(); err != nil {
 			common.SysError("failed to migrate retired frontend options: " + err.Error())
 		}
+		if err := model.RetireStripePaymentConfiguration(); err != nil {
+			return fmt.Errorf("failed to retire Stripe payment configuration: %w", err)
+		}
 	}
 	model.InitOptionMap()
 

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -205,6 +206,9 @@ func SyncOptions(frequency int) {
 }
 
 func UpdateOption(key string, value string) error {
+	if isRetiredStripeOptionKey(key) {
+		return fmt.Errorf("option %s is retired in this deployment", key)
+	}
 	// Save to database first
 	option := Option{
 		Key: key,
@@ -228,6 +232,11 @@ func UpdateOption(key string, value string) error {
 func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
+	}
+	for key := range values {
+		if isRetiredStripeOptionKey(key) {
+			return fmt.Errorf("option %s is retired in this deployment", key)
+		}
 	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
