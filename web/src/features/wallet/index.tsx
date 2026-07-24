@@ -121,10 +121,10 @@ export function Wallet(props: WalletProps) {
                 </TabsTrigger>
                 <TabsTrigger
                   value='monthly-subscription'
-                  className='data-active:bg-background min-h-11 gap-2 rounded-lg disabled:opacity-100 aria-disabled:opacity-100'
+                  className='data-active:bg-background bg-background/40 border-border/30 min-h-11 gap-2 rounded-lg border shadow-sm disabled:opacity-100 aria-disabled:opacity-100 dark:border-white/10 dark:bg-white/5'
                   disabled
                 >
-                  <span className='inline-flex items-center gap-2 opacity-55'>
+                  <span className='inline-flex min-w-0 flex-wrap items-center justify-center gap-2 whitespace-normal opacity-55'>
                     <CalendarDays className='size-4' />
                     {t('Monthly subscription')}
                     <span className='text-muted-foreground text-xs'>
