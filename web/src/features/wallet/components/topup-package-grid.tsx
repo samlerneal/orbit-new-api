@@ -26,7 +26,11 @@ import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatLocalCurrencyAmount } from '@/lib/currency'
 
-import type { TopupCampaign, TopupPackage } from '../types'
+import {
+  getTopupPackageVisualStyleClasses,
+  type TopupCampaign,
+  type TopupPackage,
+} from '../types'
 
 interface TopupPackageGridProps {
   packages: TopupPackage[]
@@ -82,12 +86,22 @@ export function TopupPackageGrid(props: TopupPackageGridProps) {
           <Sparkles className='size-4' />
           <AlertTitle className='flex items-center justify-between gap-3'>
             <span>{t(campaign.title)}</span>
-            <Badge variant='outline' className='border-amber-300'>
+            <Badge variant='outline' className='shrink-0 border-amber-300'>
               {t('Maximum bonus {{amount}}', {
-                amount: formatLocalCurrencyAmount(campaign.max_bonus),
+                amount: formatLocalCurrencyAmount(
+                  campaign.cumulative_max_bonus || campaign.max_bonus
+                ),
               })}
             </Badge>
           </AlertTitle>
+          {campaign.participant_limited && (
+            <AlertDescription className='mt-1 font-medium'>
+              {t('Limited {{total}} accounts, {{remaining}} spots remaining', {
+                total: campaign.participant_total,
+                remaining: campaign.participant_remaining,
+              })}
+            </AlertDescription>
+          )}
           <AlertDescription>{t(campaign.description)}</AlertDescription>
         </Alert>
       ))}
@@ -95,12 +109,21 @@ export function TopupPackageGrid(props: TopupPackageGridProps) {
       <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
         {props.packages.map((packageOption) => {
           const hasBonus = packageOption.bonus_amount > 0
+          const badgeValidDays = packageOption.campaign_badges
+            .filter((b) => b.valid_days > 0)
+            .map((b) => b.valid_days)
+          const sellingPoints =
+            packageOption.selling_points?.filter(Boolean) ?? []
+          const footerNote = packageOption.footer_note?.trim()
+          const visualStyleClasses = getTopupPackageVisualStyleClasses(
+            packageOption.visual_style
+          )
 
           return (
             <Card
               key={packageOption.id}
               data-card-hover='false'
-              className='border-muted hover:border-primary/60 flex min-h-80 flex-col transition-colors'
+              className={`border-muted hover:border-primary/60 flex min-h-80 flex-col transition-colors ${visualStyleClasses}`}
             >
               <CardHeader className='space-y-1.5'>
                 <div className='flex items-center justify-between gap-2'>
@@ -140,11 +163,28 @@ export function TopupPackageGrid(props: TopupPackageGridProps) {
                         className='border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300'
                         variant='outline'
                       >
-                        {t(badge.text)}
+                        {badge.valid_days > 0
+                          ? `${t(badge.text)} · ${badge.valid_days}${t('d')}`
+                          : t(badge.text)}
                       </Badge>
                     ))}
                   </div>
                 )}
+
+                {sellingPoints.length > 0 && (
+                  <div className='mt-3 space-y-1'>
+                    {sellingPoints.slice(0, 3).map((point) => (
+                      <div
+                        key={point}
+                        className='text-muted-foreground flex items-start gap-1.5 text-sm'
+                      >
+                        <Check className='mt-0.5 size-3.5 shrink-0 text-emerald-500' />
+                        <span>{point}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className='mt-auto flex items-center gap-2 border-t pt-4 text-sm'>
                   <Check className='size-4' />
                   <span>
@@ -155,6 +195,35 @@ export function TopupPackageGrid(props: TopupPackageGridProps) {
                       : t('Balance never expires')}
                   </span>
                 </div>
+
+                {badgeValidDays.length > 0 &&
+                  !(badgeValidDays.length === 1 && badgeValidDays[0] === 0) && (
+                    <div className='text-muted-foreground flex flex-col gap-0.5 text-sm'>
+                      {packageOption.campaign_badges
+                        .filter((b) => b.valid_days > 0)
+                        .map((badge) => (
+                          <div
+                            key={badge.campaign_id}
+                            className='flex items-center gap-1.5'
+                          >
+                            <Check className='size-3.5 text-emerald-500' />
+                            <span>
+                              {badgeValidDays.length === 1
+                                ? t('Bonus balance valid {{days}} days', {
+                                    days: badge.valid_days,
+                                  })
+                                : `${t(badge.text)}: ${t('Bonus balance valid {{days}} days', { days: badge.valid_days })}`}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+
+                {footerNote && (
+                  <p className='text-muted-foreground mt-2 text-xs'>
+                    {footerNote}
+                  </p>
+                )}
               </CardContent>
 
               <CardFooter>

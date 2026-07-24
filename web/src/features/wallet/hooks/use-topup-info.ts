@@ -24,14 +24,15 @@ import {
   mergePresetAmounts,
   getMinTopupAmount,
 } from '../lib'
-import type {
-  TopupInfo,
-  PresetAmount,
-  CreemProduct,
-  PaymentMethod,
-  WaffoPayMethod,
-  TopupPackage,
-  TopupCampaign,
+import {
+  isTopupPackageVisualStyle,
+  type TopupInfo,
+  type PresetAmount,
+  type CreemProduct,
+  type PaymentMethod,
+  type WaffoPayMethod,
+  type TopupPackage,
+  type TopupCampaign,
 } from '../types'
 
 // ============================================================================
@@ -143,6 +144,14 @@ function parseTopupPackages(data: unknown): TopupPackage[] {
       display_credit_amount:
         Number(item.display_credit_amount) || Number(item.credit_amount),
       bonus_amount: Number(item.bonus_amount) || 0,
+      selling_points: parseJsonArray(item.selling_points)
+        .filter((s): s is string => typeof s === 'string' && s.length > 0)
+        .slice(0, 3),
+      footer_note:
+        typeof item.footer_note === 'string' ? item.footer_note : undefined,
+      visual_style: isTopupPackageVisualStyle(item.visual_style)
+        ? item.visual_style
+        : 'default',
       campaign_badges: parseJsonArray(item.campaign_badges)
         .filter(
           (badge): badge is Record<string, unknown> =>
@@ -152,6 +161,7 @@ function parseTopupPackages(data: unknown): TopupPackage[] {
           campaign_id:
             typeof badge.campaign_id === 'string' ? badge.campaign_id : '',
           text: typeof badge.text === 'string' ? badge.text : '',
+          valid_days: Number(badge.valid_days) || 0,
         }))
         .filter((badge) => badge.campaign_id && badge.text),
     }))
@@ -180,6 +190,10 @@ function parseCampaigns(data: unknown): TopupCampaign[] {
       max_bonus: Number(item.max_bonus) || 0,
       valid_days: Number(item.valid_days) || 0,
       priority: Number(item.priority) || 0,
+      participant_limited: item.participant_limited === true,
+      participant_total: Number(item.participant_total) || 0,
+      participant_remaining: Number(item.participant_remaining) || 0,
+      cumulative_max_bonus: Number(item.cumulative_max_bonus) || 0,
     }))
     .filter((item) => item.id && item.title)
 }

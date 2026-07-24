@@ -32,10 +32,12 @@ func setupEpayTopupTestDB(t *testing.T) {
 		&Log{},
 		&PaymentCampaignState{},
 		&PaymentCampaignClaim{},
+		&PaymentCampaignParticipant{},
 		&BonusBalance{},
 		&WalletConsumeRecord{},
 	))
 	require.NoError(t, ensurePaymentCampaignClaimIndexes(db))
+	require.NoError(t, ensurePaymentCampaignParticipantIndexes(db))
 	DB, LOG_DB = db, db
 
 	sqlDB, err := db.DB()

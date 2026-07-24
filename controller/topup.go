@@ -40,6 +40,13 @@ func GetTopUpInfo(c *gin.Context) {
 	userId := c.GetInt("id")
 	topupPackages := make([]gin.H, 0)
 	visibleCampaigns := make(map[string]gin.H)
+	campaignParticipantStats := make(map[string]model.PaymentCampaignClaimStats)
+	allStats, statsErr := model.GetPaymentCampaignClaimStats(time.Now().Unix())
+	if statsErr == nil {
+		for _, stat := range allStats {
+			campaignParticipantStats[stat.CampaignId] = stat
+		}
+	}
 	for _, packageOption := range operation_setting.GetTopupPackages() {
 		resolvedPackage, ok := operation_setting.ResolveTopupPackage(packageOption.ID)
 		if ok {
@@ -55,18 +62,24 @@ func GetTopUpInfo(c *gin.Context) {
 				campaignBadges = append(campaignBadges, gin.H{
 					"campaign_id": offer.Campaign.ID,
 					"text":        offer.Campaign.BadgeText,
+					"valid_days":  offer.Campaign.ValidDays,
 				})
 				grossBonus := offer.TotalAmount - resolvedPackage.PayAmount
 				campaignInfo, exists := visibleCampaigns[offer.Campaign.ID]
 				if !exists || grossBonus > campaignInfo["max_bonus"].(float64) {
+					participantStat := campaignParticipantStats[offer.Campaign.ID]
 					visibleCampaigns[offer.Campaign.ID] = gin.H{
-						"id":          offer.Campaign.ID,
-						"title":       offer.Campaign.BannerTitle,
-						"description": offer.Campaign.BannerText,
-						"badge_text":  offer.Campaign.BadgeText,
-						"max_bonus":   grossBonus,
-						"valid_days":  offer.Campaign.ValidDays,
-						"priority":    offer.Campaign.Priority,
+						"id":                    offer.Campaign.ID,
+						"title":                 offer.Campaign.BannerTitle,
+						"description":           offer.Campaign.BannerText,
+						"badge_text":            offer.Campaign.BadgeText,
+						"max_bonus":             grossBonus,
+						"valid_days":            offer.Campaign.ValidDays,
+						"priority":              offer.Campaign.Priority,
+						"participant_limited":   participantStat.ParticipantLimited,
+						"participant_total":     participantStat.ParticipantsTotal,
+						"participant_remaining": participantStat.ParticipantsRemaining,
+						"cumulative_max_bonus":  computeCumulativeMaxBonus(offer.Campaign, operation_setting.GetTopupPackages()),
 					}
 				}
 			}
@@ -81,6 +94,9 @@ func GetTopUpInfo(c *gin.Context) {
 				"bonus_amount":          displayCredit - resolvedPackage.CreditAmount,
 				"campaign_badges":       campaignBadges,
 				"sort_order":            resolvedPackage.SortOrder,
+				"selling_points":        resolvedPackage.SellingPoints,
+				"footer_note":           resolvedPackage.FooterNote,
+				"visual_style":          resolvedPackage.VisualStyle,
 			})
 		}
 	}
@@ -539,6 +555,44 @@ type AdminCompleteTopupRequest struct {
 }
 
 // AdminCompleteTopUp 管理员补单接口
+// computeCumulativeMaxBonus calculates the sum of (total_amount - pay_amount)
+// across all enabled packages applicable to the campaign. This is the campaign-wide
+// advertising ceiling, independent of any user's claim progress.
+func computeCumulativeMaxBonus(
+	campaign operation_setting.PaymentCampaign,
+	packages []operation_setting.TopupPackage,
+) int64 {
+	var total int64
+	for _, packageOption := range packages {
+		if !packageOption.Enabled || packageOption.PayAmount <= 0 {
+			continue
+		}
+		if !campaignAppliesToPackageController(campaign, packageOption.ID) {
+			continue
+		}
+		totalAmount, bonusAmount, err := model.ResolveCampaignReward(campaign, packageOption)
+		if err != nil || bonusAmount.LessThanOrEqual(decimal.Zero) {
+			continue
+		}
+		grossBonus := totalAmount.Sub(decimal.NewFromFloat(packageOption.PayAmount))
+		fen := grossBonus.Mul(decimal.NewFromInt(100)).IntPart()
+		total += fen
+	}
+	return total / 100
+}
+
+func campaignAppliesToPackageController(campaign operation_setting.PaymentCampaign, packageId string) bool {
+	if len(campaign.PackageIDs) == 0 {
+		return true
+	}
+	for _, candidate := range campaign.PackageIDs {
+		if candidate == packageId {
+			return true
+		}
+	}
+	return false
+}
+
 func AdminCompleteTopUp(c *gin.Context) {
 	var req AdminCompleteTopupRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.TradeNo == "" {

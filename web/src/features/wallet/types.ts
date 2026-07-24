@@ -180,6 +180,41 @@ export interface SupportContact {
   value: string
 }
 
+export const TOPUP_PACKAGE_VISUAL_STYLES = [
+  'default',
+  'recommended',
+  'popular',
+  'value',
+] as const
+
+export type TopupPackageVisualStyle =
+  (typeof TOPUP_PACKAGE_VISUAL_STYLES)[number]
+
+const TOPUP_PACKAGE_VISUAL_STYLE_CLASSES: Record<
+  TopupPackageVisualStyle,
+  string
+> = {
+  default: '',
+  recommended: 'ring-1 ring-primary/20',
+  popular: 'bg-primary/5 ring-2 ring-primary/30',
+  value:
+    'bg-amber-50/40 ring-1 ring-amber-400/30 dark:bg-amber-950/10 dark:ring-amber-700/40',
+}
+
+export function isTopupPackageVisualStyle(
+  value: unknown
+): value is TopupPackageVisualStyle {
+  return (
+    typeof value === 'string' &&
+    TOPUP_PACKAGE_VISUAL_STYLES.includes(value as TopupPackageVisualStyle)
+  )
+}
+
+export function getTopupPackageVisualStyleClasses(value: unknown): string {
+  const style = isTopupPackageVisualStyle(value) ? value : 'default'
+  return TOPUP_PACKAGE_VISUAL_STYLE_CLASSES[style]
+}
+
 export interface TopupPackage {
   /** Stable package identifier submitted to the server */
   id: string
@@ -198,7 +233,17 @@ export interface TopupPackage {
   /** Expiring campaign credit included in display credit */
   bonus_amount: number
   /** Eligible campaign badges */
-  campaign_badges: Array<{ campaign_id: string; text: string }>
+  campaign_badges: Array<{
+    campaign_id: string
+    text: string
+    valid_days: number
+  }>
+  /** Admin-configured selling points */
+  selling_points?: string[]
+  /** Admin-configured footer note */
+  footer_note?: string
+  /** Admin-configured visual style */
+  visual_style?: TopupPackageVisualStyle
 }
 
 export interface TopupCampaign {
@@ -209,6 +254,10 @@ export interface TopupCampaign {
   max_bonus: number
   valid_days: number
   priority: number
+  participant_limited: boolean
+  participant_total: number
+  participant_remaining: number
+  cumulative_max_bonus: number
 }
 
 /**

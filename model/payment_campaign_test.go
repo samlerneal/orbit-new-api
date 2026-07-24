@@ -28,35 +28,37 @@ func useTestCampaign(t *testing.T, campaign operation_setting.PaymentCampaign) {
 
 func campaignTestRule(id string, total int) operation_setting.PaymentCampaign {
 	return operation_setting.PaymentCampaign{
-		ID:                 id,
-		Name:               "Campaign",
-		Enabled:            true,
-		PackageIDs:         []string{"advanced"},
-		Eligibility:        operation_setting.CampaignEligibilityPerCampaign,
-		MaxClaimsPerUser:   1,
-		MaxClaimsPerEmail:  1,
-		MaxClaimsTotal:     total,
-		ReservationMinutes: 3,
-		RewardMode:         operation_setting.CampaignRewardTargetTotalPercent,
-		RewardPercent:      30,
-		RoundingMode:       operation_setting.CampaignRoundingCeilYuan,
-		ValidDays:          45,
+		ID:                   id,
+		Name:                 "Campaign",
+		Enabled:              true,
+		PackageIDs:           []string{"advanced"},
+		Eligibility:          operation_setting.CampaignEligibilityPerPackage,
+		MaxClaimsPerUser:     1,
+		MaxClaimsPerEmail:    1,
+		MaxClaimsTotal:       0,
+		MaxParticipantsTotal: total,
+		ReservationMinutes:   3,
+		RewardMode:           operation_setting.CampaignRewardTargetTotalPercent,
+		RewardPercent:        30,
+		RoundingMode:         operation_setting.CampaignRoundingCeilYuan,
+		ValidDays:            45,
 	}
 }
 
 func campaignTestSnapshot(campaign operation_setting.PaymentCampaign) CampaignAwardSnapshot {
 	return CampaignAwardSnapshot{
-		CampaignId:         campaign.ID,
-		CampaignName:       campaign.Name,
-		Eligibility:        campaign.Eligibility,
-		MaxClaims:          campaign.MaxClaimsPerUser,
-		MaxClaimsPerEmail:  campaign.MaxClaimsPerEmail,
-		MaxClaimsTotal:     campaign.MaxClaimsTotal,
-		ReservationMinutes: campaign.ReservationMinutes,
-		PackageId:          "advanced",
-		BonusQuota:         280,
-		BonusAmountCNY:     "28.00",
-		ValidDays:          45,
+		CampaignId:           campaign.ID,
+		CampaignName:         campaign.Name,
+		Eligibility:          campaign.Eligibility,
+		MaxClaims:            campaign.MaxClaimsPerUser,
+		MaxClaimsPerEmail:    campaign.MaxClaimsPerEmail,
+		MaxClaimsTotal:       campaign.MaxClaimsTotal,
+		MaxParticipantsTotal: campaign.MaxParticipantsTotal,
+		ReservationMinutes:   campaign.ReservationMinutes,
+		PackageId:            "advanced",
+		BonusQuota:           280,
+		BonusAmountCNY:       "28.00",
+		ValidDays:            45,
 	}
 }
 
@@ -111,7 +113,7 @@ func TestCampaignRewardUsesPaymentAmountAndRoundsUp(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(decimal.NewFromFloat(test.pay).String(), func(t *testing.T) {
-			total, bonus, err := resolveCampaignReward(campaign, operation_setting.TopupPackage{
+			total, bonus, err := ResolveCampaignReward(campaign, operation_setting.TopupPackage{
 				PayAmount: test.pay, CreditAmount: test.regular,
 			})
 			require.NoError(t, err)
@@ -174,6 +176,178 @@ func TestPaymentCampaignClaimMigrationPreservesLegacyRows(t *testing.T) {
 	assert.Empty(t, migrated.EmailHash)
 	assert.Zero(t, migrated.ReservedUntil)
 	assert.Equal(t, key, *migrated.ClaimKey)
+}
+
+func TestMigratePaymentCampaignParticipantsPreservesIdentityDeadlineAndIsIdempotent(t *testing.T) {
+	setupEpayTopupTestDB(t)
+	campaign := campaignTestRule("participant-migration", 100)
+	useTestCampaign(t, campaign)
+	now := common.GetTimestamp()
+
+	admittedUser := User{
+		Username: "migration-admitted",
+		Email:    "admitted@example.com",
+		AffCode:  "migration-admitted",
+	}
+	reservedUser := User{
+		Username: "migration-reserved",
+		Email:    "reserved@example.com",
+		AffCode:  "migration-reserved",
+	}
+	require.NoError(t, DB.Create(&admittedUser).Error)
+	require.NoError(t, DB.Create(&reservedUser).Error)
+	admittedEmailHash := CampaignEmailHash(admittedUser.Email)
+	reservedEmailHash := CampaignEmailHash(reservedUser.Email)
+	claims := []PaymentCampaignClaim{
+		{
+			CampaignId: campaign.ID, UserId: admittedUser.Id, PackageId: "standard",
+			TopUpId: 1001, Status: CampaignClaimStatusAwarded, EmailHash: admittedEmailHash,
+			AwardedAt: now - 120, CreatedAt: now - 130,
+		},
+		{
+			CampaignId: campaign.ID, UserId: admittedUser.Id, PackageId: "advanced",
+			TopUpId: 1002, Status: CampaignClaimStatusAwarded, EmailHash: admittedEmailHash,
+			AwardedAt: now - 60, CreatedAt: now - 70,
+		},
+		{
+			CampaignId: campaign.ID, UserId: reservedUser.Id, PackageId: "standard",
+			TopUpId: 2001, Status: CampaignClaimStatusReserved, EmailHash: reservedEmailHash,
+			ReservedUntil: now + 60, CreatedAt: now - 10,
+		},
+		{
+			CampaignId: campaign.ID, UserId: reservedUser.Id, PackageId: "advanced",
+			TopUpId: 2002, Status: CampaignClaimStatusReserved, EmailHash: reservedEmailHash,
+			ReservedUntil: now + 120, CreatedAt: now - 5,
+		},
+	}
+	require.NoError(t, DB.Create(&claims).Error)
+
+	require.NoError(t, migratePaymentCampaignParticipants())
+
+	var admitted PaymentCampaignParticipant
+	require.NoError(t, DB.Where(
+		"campaign_id = ? AND user_id = ?",
+		campaign.ID,
+		admittedUser.Id,
+	).First(&admitted).Error)
+	assert.Equal(t, CampaignParticipantStatusAdmitted, admitted.Status)
+	assert.Equal(t, admittedEmailHash, admitted.EmailHash)
+	require.NotNil(t, admitted.ParticipantKey)
+	assert.Equal(t, campaignParticipantPrefix(campaign)+fmt.Sprintf(":user:%d", admittedUser.Id), *admitted.ParticipantKey)
+	require.NotNil(t, admitted.EmailParticipantKey)
+	assert.Equal(t, campaignParticipantEmailPrefix(campaign, admittedEmailHash), *admitted.EmailParticipantKey)
+	require.NotNil(t, admitted.CampaignSlotKey)
+	assert.Equal(t, now-120, admitted.AdmittedAt)
+	assert.Zero(t, admitted.ReservedUntil)
+
+	var reserved PaymentCampaignParticipant
+	require.NoError(t, DB.Where(
+		"campaign_id = ? AND user_id = ?",
+		campaign.ID,
+		reservedUser.Id,
+	).First(&reserved).Error)
+	assert.Equal(t, CampaignParticipantStatusReserved, reserved.Status)
+	assert.Equal(t, reservedEmailHash, reserved.EmailHash)
+	require.NotNil(t, reserved.ParticipantKey)
+	require.NotNil(t, reserved.EmailParticipantKey)
+	assert.Equal(t, campaignParticipantEmailPrefix(campaign, reservedEmailHash), *reserved.EmailParticipantKey)
+	require.NotNil(t, reserved.CampaignSlotKey)
+	assert.Equal(t, now+120, reserved.ReservedUntil)
+	assert.Zero(t, reserved.AdmittedAt)
+
+	var state PaymentCampaignState
+	require.NoError(t, DB.First(&state, "campaign_id = ?", campaign.ID).Error)
+	assert.Equal(t, 1, state.ParticipantMigrationVersion)
+	firstRevision := state.Revision
+	firstAdmittedSlot := *admitted.CampaignSlotKey
+	firstReservedSlot := *reserved.CampaignSlotKey
+
+	require.NoError(t, migratePaymentCampaignParticipants())
+
+	var participantCount int64
+	require.NoError(t, DB.Model(&PaymentCampaignParticipant{}).
+		Where("campaign_id = ?", campaign.ID).
+		Count(&participantCount).Error)
+	assert.EqualValues(t, 2, participantCount)
+	require.NoError(t, DB.First(&state, "campaign_id = ?", campaign.ID).Error)
+	assert.Equal(t, firstRevision+1, state.Revision)
+	require.NoError(t, DB.First(&admitted, admitted.Id).Error)
+	require.NoError(t, DB.First(&reserved, reserved.Id).Error)
+	assert.Equal(t, firstAdmittedSlot, *admitted.CampaignSlotKey)
+	assert.Equal(t, firstReservedSlot, *reserved.CampaignSlotKey)
+	assert.Equal(t, now+120, reserved.ReservedUntil)
+}
+
+func TestMigratePaymentCampaignParticipantsRollsBackOnFailure(t *testing.T) {
+	setupEpayTopupTestDB(t)
+	campaign := campaignTestRule("participant-migration-rollback", 100)
+	useTestCampaign(t, campaign)
+	now := common.GetTimestamp()
+
+	firstUser := User{
+		Username: "migration-first",
+		Email:    "migration-first@example.com",
+		AffCode:  "migration-first",
+	}
+	secondUser := User{
+		Username: "migration-second",
+		Email:    "migration-second@example.com",
+		AffCode:  "migration-second",
+	}
+	require.NoError(t, DB.Create(&firstUser).Error)
+	require.NoError(t, DB.Create(&secondUser).Error)
+	require.NoError(t, DB.Create(&[]PaymentCampaignClaim{
+		{
+			CampaignId: campaign.ID, UserId: firstUser.Id, PackageId: "experience",
+			TopUpId: 3001, Status: CampaignClaimStatusAwarded,
+			EmailHash: CampaignEmailHash(firstUser.Email), AwardedAt: now - 20,
+		},
+		{
+			CampaignId: campaign.ID, UserId: secondUser.Id, PackageId: "standard",
+			TopUpId: 3002, Status: CampaignClaimStatusAwarded,
+			EmailHash: CampaignEmailHash(secondUser.Email), AwardedAt: now - 10,
+		},
+	}).Error)
+	triggerSQL := fmt.Sprintf(`
+		CREATE TRIGGER reject_participant_migration
+		BEFORE INSERT ON payment_campaign_participants
+		WHEN NEW.user_id = %d
+		BEGIN
+			SELECT RAISE(ABORT, 'injected participant migration failure');
+		END
+	`, secondUser.Id)
+	require.NoError(t, DB.Exec(triggerSQL).Error)
+
+	err := migratePaymentCampaignParticipants()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "injected participant migration failure")
+
+	var participantCount int64
+	require.NoError(t, DB.Model(&PaymentCampaignParticipant{}).
+		Where("campaign_id = ?", campaign.ID).
+		Count(&participantCount).Error)
+	assert.Zero(t, participantCount)
+	var migratedStateCount int64
+	require.NoError(t, DB.Model(&PaymentCampaignState{}).
+		Where("campaign_id = ? AND participant_migration_version >= ?", campaign.ID, 1).
+		Count(&migratedStateCount).Error)
+	assert.Zero(t, migratedStateCount)
+
+	require.NoError(t, DB.Exec("DROP TRIGGER reject_participant_migration").Error)
+	require.NoError(t, migratePaymentCampaignParticipants())
+
+	var migratedParticipants []PaymentCampaignParticipant
+	require.NoError(t, DB.Where("campaign_id = ?", campaign.ID).
+		Order("user_id ASC").
+		Find(&migratedParticipants).Error)
+	require.Len(t, migratedParticipants, 2)
+	require.NotNil(t, migratedParticipants[0].CampaignSlotKey)
+	require.NotNil(t, migratedParticipants[1].CampaignSlotKey)
+	assert.Equal(t, campaign.ID+":campaign-slot:1", *migratedParticipants[0].CampaignSlotKey)
+	assert.Equal(t, campaign.ID+":campaign-slot:2", *migratedParticipants[1].CampaignSlotKey)
+	var migratedState PaymentCampaignState
+	require.NoError(t, DB.First(&migratedState, "campaign_id = ?", campaign.ID).Error)
+	assert.Equal(t, 1, migratedState.ParticipantMigrationVersion)
 }
 
 func TestCampaignTotalLimitReservesFirstHundredAndRejectsNext(t *testing.T) {
@@ -374,7 +548,7 @@ func TestExpiredReservationCanBeReusedAndLatePayerGetsRegularCreditOnlyWhenFull(
 	assert.Equal(t, 1_000, user.Quota)
 }
 
-func TestExpiredReservationLatePaymentReclaimsAvailableSlot(t *testing.T) {
+func TestExpiredReservationNoCapacityGetsRegularOnly(t *testing.T) {
 	setupEpayTopupTestDB(t)
 	campaign := campaignTestRule("expiry-reclaim", 1)
 	useTestCampaign(t, campaign)
@@ -390,10 +564,7 @@ func TestExpiredReservationLatePaymentReclaimsAvailableSlot(t *testing.T) {
 	require.NoError(t, CompleteEpayTopUp(topUp.TradeNo, "wxpay", decimal.NewFromInt(98), "127.0.0.1"))
 	var completed TopUp
 	require.NoError(t, DB.First(&completed, topUp.Id).Error)
-	assert.EqualValues(t, 280, completed.BonusCreditQuota)
-	var claim PaymentCampaignClaim
-	require.NoError(t, DB.Where("topup_id = ?", topUp.Id).First(&claim).Error)
-	assert.Equal(t, CampaignClaimStatusAwarded, claim.Status)
+	assert.Zero(t, completed.BonusCreditQuota)
 }
 
 func TestCampaignCloseHonorsLiveReservationButRejectsExpiredReclaim(t *testing.T) {
@@ -450,11 +621,13 @@ func TestCampaignStatsSeparateAwardedReservedAndRemaining(t *testing.T) {
 	stats, err := GetPaymentCampaignClaimStats(now)
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
-	assert.True(t, stats[0].Limited)
-	assert.EqualValues(t, 3, stats[0].Total)
-	assert.EqualValues(t, 1, stats[0].Awarded)
-	assert.EqualValues(t, 1, stats[0].Reserved)
-	assert.EqualValues(t, 1, stats[0].Remaining)
+	assert.True(t, stats[0].ParticipantLimited)
+	assert.EqualValues(t, 3, stats[0].ParticipantsTotal)
+	assert.EqualValues(t, 1, stats[0].ParticipantsAdmitted)
+	assert.EqualValues(t, 1, stats[0].ParticipantsReserved)
+	assert.EqualValues(t, 1, stats[0].ParticipantsRemaining)
+	assert.EqualValues(t, 1, stats[0].ClaimsAwarded)
+	assert.EqualValues(t, 1, stats[0].ClaimsReserved)
 }
 
 func TestCancelledTopUpReleasesCampaignReservation(t *testing.T) {

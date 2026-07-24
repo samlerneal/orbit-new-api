@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/QuantumNous/new-api/setting/config"
@@ -25,14 +26,17 @@ type PaymentSetting struct {
 }
 
 type TopupPackage struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	Description  string  `json:"description"`
-	Tag          string  `json:"tag"`
-	PayAmount    float64 `json:"pay_amount"`
-	CreditAmount float64 `json:"credit_amount"`
-	Enabled      bool    `json:"enabled"`
-	SortOrder    int     `json:"sort_order"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description"`
+	Tag           string   `json:"tag"`
+	PayAmount     float64  `json:"pay_amount"`
+	CreditAmount  float64  `json:"credit_amount"`
+	Enabled       bool     `json:"enabled"`
+	SortOrder     int      `json:"sort_order"`
+	SellingPoints []string `json:"selling_points"`
+	FooterNote    string   `json:"footer_note"`
+	VisualStyle   string   `json:"visual_style"`
 }
 
 type SupportContact struct {
@@ -62,27 +66,28 @@ const (
 // PaymentCampaign is a controlled, data-only promotion rule. Administrators
 // can combine supported conditions without executing custom code.
 type PaymentCampaign struct {
-	ID                 string             `json:"id"`
-	Name               string             `json:"name"`
-	BannerTitle        string             `json:"banner_title"`
-	BannerText         string             `json:"banner_text"`
-	BadgeText          string             `json:"badge_text"`
-	Enabled            bool               `json:"enabled"`
-	StartsAt           int64              `json:"starts_at"`
-	EndsAt             int64              `json:"ends_at"`
-	PackageIDs         []string           `json:"package_ids"`
-	Eligibility        string             `json:"eligibility"`
-	MaxClaimsPerUser   int                `json:"max_claims_per_user"`
-	MaxClaimsPerEmail  int                `json:"max_claims_per_email"`
-	MaxClaimsTotal     int                `json:"max_claims_total"`
-	ReservationMinutes int                `json:"reservation_minutes"`
-	RewardMode         string             `json:"reward_mode"`
-	RewardPercent      float64            `json:"reward_percent"`
-	FixedBonus         map[string]float64 `json:"fixed_bonus"`
-	RoundingMode       string             `json:"rounding_mode"`
-	ValidDays          int                `json:"valid_days"`
-	Stackable          bool               `json:"stackable"`
-	Priority           int                `json:"priority"`
+	ID                   string             `json:"id"`
+	Name                 string             `json:"name"`
+	BannerTitle          string             `json:"banner_title"`
+	BannerText           string             `json:"banner_text"`
+	BadgeText            string             `json:"badge_text"`
+	Enabled              bool               `json:"enabled"`
+	StartsAt             int64              `json:"starts_at"`
+	EndsAt               int64              `json:"ends_at"`
+	PackageIDs           []string           `json:"package_ids"`
+	Eligibility          string             `json:"eligibility"`
+	MaxClaimsPerUser     int                `json:"max_claims_per_user"`
+	MaxClaimsPerEmail    int                `json:"max_claims_per_email"`
+	MaxClaimsTotal       int                `json:"max_claims_total"`
+	MaxParticipantsTotal int                `json:"max_participants_total"`
+	ReservationMinutes   int                `json:"reservation_minutes"`
+	RewardMode           string             `json:"reward_mode"`
+	RewardPercent        float64            `json:"reward_percent"`
+	FixedBonus           map[string]float64 `json:"fixed_bonus"`
+	RoundingMode         string             `json:"rounding_mode"`
+	ValidDays            int                `json:"valid_days"`
+	Stackable            bool               `json:"stackable"`
+	Priority             int                `json:"priority"`
 }
 
 const (
@@ -95,31 +100,32 @@ var paymentSetting = PaymentSetting{
 	AmountOptions:  []int{10, 20, 50, 100, 200, 500},
 	AmountDiscount: map[int]float64{},
 	TopupPackages: []TopupPackage{
-		{ID: "experience", Name: "Experience", Description: "Best for daily conversations", PayAmount: 14, CreditAmount: 14, Enabled: true, SortOrder: 10},
-		{ID: "standard", Name: "Standard", Description: "Best for solving complex problems", Tag: "Daily choice", PayAmount: 49, CreditAmount: 50, Enabled: true, SortOrder: 20},
-		{ID: "advanced", Name: "Advanced package", Description: "Best for frequent use", Tag: "Most popular", PayAmount: 98, CreditAmount: 100, Enabled: true, SortOrder: 30},
-		{ID: "professional", Name: "Professional", Description: "Built for professional developers", Tag: "High-volume value", PayAmount: 490, CreditAmount: 500, Enabled: true, SortOrder: 40},
+		{ID: "experience", Name: "体验档", Description: "适合日常对话", PayAmount: 14, CreditAmount: 14, Enabled: true, SortOrder: 10},
+		{ID: "standard", Name: "标准档", Description: "适合解决复杂问题", Tag: "每日之选", PayAmount: 49, CreditAmount: 50, Enabled: true, SortOrder: 20},
+		{ID: "advanced", Name: "进阶档", Description: "适合频繁使用", Tag: "最受欢迎", PayAmount: 98, CreditAmount: 100, Enabled: true, SortOrder: 30},
+		{ID: "professional", Name: "专业档", Description: "为专业开发者打造", Tag: "高量超值", PayAmount: 490, CreditAmount: 500, Enabled: true, SortOrder: 40},
 	},
 	Campaigns: []PaymentCampaign{
 		{
-			ID:                 "launch-first-topup-30",
-			Name:               "Launch first top-up",
-			BannerTitle:        "First top-up bonus: 30%",
-			BannerText:         "Complete your first top-up in this campaign to receive time-limited bonus balance.",
-			BadgeText:          "First top-up +30%",
-			Enabled:            false,
-			PackageIDs:         []string{"experience", "standard", "advanced", "professional"},
-			Eligibility:        CampaignEligibilityPerCampaign,
-			MaxClaimsPerUser:   1,
-			MaxClaimsPerEmail:  1,
-			MaxClaimsTotal:     100,
-			ReservationMinutes: 3,
-			RewardMode:         CampaignRewardTargetTotalPercent,
-			RewardPercent:      30,
-			RoundingMode:       CampaignRoundingCeilYuan,
-			ValidDays:          45,
-			Stackable:          false,
-			Priority:           100,
+			ID:                   "launch-first-topup-30",
+			Name:                 "Launch first top-up",
+			BannerTitle:          "First top-up bonus: 30%",
+			BannerText:           "Complete your first top-up in this campaign to receive time-limited bonus balance.",
+			BadgeText:            "First top-up +30%",
+			Enabled:              false,
+			PackageIDs:           []string{"experience", "standard", "advanced", "professional"},
+			Eligibility:          CampaignEligibilityPerPackage,
+			MaxClaimsPerUser:     1,
+			MaxClaimsPerEmail:    1,
+			MaxClaimsTotal:       0,
+			MaxParticipantsTotal: 100,
+			ReservationMinutes:   3,
+			RewardMode:           CampaignRewardTargetTotalPercent,
+			RewardPercent:        30,
+			RoundingMode:         CampaignRoundingCeilYuan,
+			ValidDays:            45,
+			Stackable:            false,
+			Priority:             100,
 		},
 	},
 	SupportContacts: []SupportContact{
@@ -185,17 +191,69 @@ func GetSupportContacts() []SupportContact {
 }
 
 func normalizeLegacyCampaignSafeguards(campaign PaymentCampaign) PaymentCampaign {
-	if campaign.ReservationMinutes != 0 {
+	if campaign.ReservationMinutes <= 0 {
+		campaign.ReservationMinutes = DefaultCampaignReservationMinutes
+	}
+	// Compatibility migration: per_campaign activity configs with
+	// max_claims_total become per_package with participant capacity.
+	// This is an expected business change approved by Owner, not a
+	// no-op normalization.
+	if campaign.ID == "launch-first-topup-30" &&
+		(campaign.Eligibility == "" || campaign.Eligibility == CampaignEligibilityPerCampaign) &&
+		campaign.MaxClaimsTotal > 0 {
+		if campaign.MaxClaimsPerEmail == 0 {
+			campaign.MaxClaimsPerEmail = 1
+		}
+		campaign.Eligibility = CampaignEligibilityPerPackage
+		campaign.MaxParticipantsTotal = campaign.MaxClaimsTotal
+		campaign.MaxClaimsTotal = 0
 		return campaign
 	}
-	campaign.ReservationMinutes = DefaultCampaignReservationMinutes
 	if campaign.ID == "launch-first-topup-30" &&
 		campaign.MaxClaimsPerEmail == 0 &&
-		campaign.MaxClaimsTotal == 0 {
+		campaign.MaxClaimsTotal == 0 &&
+		campaign.MaxParticipantsTotal == 0 {
 		campaign.MaxClaimsPerEmail = 1
-		campaign.MaxClaimsTotal = 100
+		campaign.MaxParticipantsTotal = 100
 	}
 	return campaign
+}
+
+// containsForbiddenContent rejects HTML tags, Markdown syntax,
+// JavaScript fragments, CSS class names and raw colour values in
+// admin-controlled free-text fields. The frontend renders these
+// as plain text, but the contract forbids submission of such
+// content so it is rejected at the server boundary.
+var forbiddenControlledTextPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`!?\[[^]]*]\([^)]*\)`),
+	regexp.MustCompile(`(?m)(^|[\r\n])[[:space:]]{0,3}(#{1,6}|>|[-+*])[[:space:]]+`),
+	regexp.MustCompile(`(^|[[:space:](])[*_][^*_\r\n]+[*_]([[:space:]).,!?:;]|$)`),
+	regexp.MustCompile(`(?i)javascript[[:space:]]*:`),
+	regexp.MustCompile(`(?i)\bon[a-z]+[[:space:]]*=`),
+	regexp.MustCompile(`(?i)\b(class|classname|style)[[:space:]]*=`),
+	regexp.MustCompile(`(?i)(^|[[:space:];{])\.[a-z_-][a-z0-9_-]*`),
+	regexp.MustCompile(`(?i)\b(bg|text|border|ring|from|via|to)-([a-z]+|\[[^]]+])(-[0-9]{1,3})?\b`),
+	regexp.MustCompile(`(?i)#[0-9a-f]{3,8}\b`),
+	regexp.MustCompile(`(?i)\b(rgb|rgba|hsl|hsla|oklch)[[:space:]]*\(`),
+	regexp.MustCompile(`(?i)\b(color|background(-color)?|border-color)[[:space:]]*:`),
+}
+
+func containsForbiddenContent(value string) bool {
+	if value == "" {
+		return false
+	}
+	if strings.ContainsAny(value, "<>`") ||
+		strings.Contains(value, "**") ||
+		strings.Contains(value, "__") ||
+		strings.Contains(value, "~~") {
+		return true
+	}
+	for _, pattern := range forbiddenControlledTextPatterns {
+		if pattern.MatchString(value) {
+			return true
+		}
+	}
+	return false
 }
 
 func ResolveTopupPackage(packageID string) (TopupPackage, bool) {
@@ -232,11 +290,50 @@ func ValidateTopupPackages(packages []TopupPackage) error {
 		if len(packageOption.Description) > 160 || len(packageOption.Tag) > 40 {
 			return fmt.Errorf("topup package %s text is too long", id)
 		}
+		for field, value := range map[string]string{
+			"name":        packageOption.Name,
+			"description": packageOption.Description,
+			"tag":         packageOption.Tag,
+		} {
+			if containsForbiddenContent(value) {
+				return fmt.Errorf("topup package %s %s contains forbidden content", id, field)
+			}
+		}
 		if packageOption.PayAmount <= 0 || packageOption.CreditAmount < packageOption.PayAmount {
 			return fmt.Errorf("topup package %s has invalid amounts", id)
 		}
 		if packageOption.PayAmount > 100000 || packageOption.CreditAmount > 100000 {
 			return fmt.Errorf("topup package %s exceeds the amount limit", id)
+		}
+		if len(packageOption.SellingPoints) > 3 {
+			return fmt.Errorf("topup package %s has more than 3 selling points", id)
+		}
+		seenSellingPoints := make(map[string]struct{}, len(packageOption.SellingPoints))
+		for idx, point := range packageOption.SellingPoints {
+			if len(point) > 80 {
+				return fmt.Errorf("topup package %s selling point %d exceeds 80 characters", id, idx+1)
+			}
+			if containsForbiddenContent(point) {
+				return fmt.Errorf("topup package %s selling point %d contains forbidden content", id, idx+1)
+			}
+			normalizedPoint := strings.ToLower(strings.TrimSpace(point))
+			if normalizedPoint != "" {
+				if _, exists := seenSellingPoints[normalizedPoint]; exists {
+					return fmt.Errorf("topup package %s has duplicate selling points", id)
+				}
+				seenSellingPoints[normalizedPoint] = struct{}{}
+			}
+		}
+		if len(packageOption.FooterNote) > 120 {
+			return fmt.Errorf("topup package %s footer note exceeds 120 characters", id)
+		}
+		if containsForbiddenContent(packageOption.FooterNote) {
+			return fmt.Errorf("topup package %s footer note contains forbidden content", id)
+		}
+		switch packageOption.VisualStyle {
+		case "", "default", "recommended", "popular", "value":
+		default:
+			return fmt.Errorf("topup package %s has an unsupported visual style: %s", id, packageOption.VisualStyle)
 		}
 	}
 	return nil
@@ -296,6 +393,16 @@ func ValidatePaymentCampaigns(campaigns []PaymentCampaign, packages []TopupPacka
 		if strings.TrimSpace(campaign.Name) == "" || len(campaign.Name) > 100 || len(campaign.BannerTitle) > 120 || len(campaign.BannerText) > 300 || len(campaign.BadgeText) > 50 {
 			return fmt.Errorf("campaign %s has invalid text", id)
 		}
+		for field, value := range map[string]string{
+			"name":         campaign.Name,
+			"banner_title": campaign.BannerTitle,
+			"banner_text":  campaign.BannerText,
+			"badge_text":   campaign.BadgeText,
+		} {
+			if containsForbiddenContent(value) {
+				return fmt.Errorf("campaign %s %s contains forbidden content", id, field)
+			}
+		}
 		if campaign.StartsAt > 0 && campaign.EndsAt > 0 && campaign.EndsAt <= campaign.StartsAt {
 			return fmt.Errorf("campaign %s end time must be after start time", id)
 		}
@@ -310,6 +417,9 @@ func ValidatePaymentCampaigns(campaigns []PaymentCampaign, packages []TopupPacka
 		}
 		if campaign.MaxClaimsTotal < 0 || campaign.MaxClaimsTotal > 1000000 {
 			return fmt.Errorf("campaign %s has an invalid total claim limit", id)
+		}
+		if campaign.MaxParticipantsTotal < 0 || campaign.MaxParticipantsTotal > 1000000 {
+			return fmt.Errorf("campaign %s has an invalid total participant limit", id)
 		}
 		if campaign.ReservationMinutes < 1 || campaign.ReservationMinutes > 1440 {
 			return fmt.Errorf("campaign %s reservation minutes must be between 1 and 1440", id)

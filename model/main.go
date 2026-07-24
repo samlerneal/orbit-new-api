@@ -284,6 +284,7 @@ func migrateDB() error {
 		&TopUp{},
 		&PaymentCampaignState{},
 		&PaymentCampaignClaim{},
+		&PaymentCampaignParticipant{},
 		&BonusBalance{},
 		&WalletConsumeRecord{},
 		&QuotaData{},
@@ -311,6 +312,12 @@ func migrateDB() error {
 		return err
 	}
 	if err := ensurePaymentCampaignClaimIndexes(DB); err != nil {
+		return err
+	}
+	if err := ensurePaymentCampaignParticipantIndexes(DB); err != nil {
+		return err
+	}
+	if err := migratePaymentCampaignParticipants(); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
@@ -354,6 +361,7 @@ func migrateDBFast() error {
 		{&TopUp{}, "TopUp"},
 		{&PaymentCampaignState{}, "PaymentCampaignState"},
 		{&PaymentCampaignClaim{}, "PaymentCampaignClaim"},
+		{&PaymentCampaignParticipant{}, "PaymentCampaignParticipant"},
 		{&BonusBalance{}, "BonusBalance"},
 		{&WalletConsumeRecord{}, "WalletConsumeRecord"},
 		{&QuotaData{}, "QuotaData"},
@@ -399,6 +407,12 @@ func migrateDBFast() error {
 		}
 	}
 	if err := ensurePaymentCampaignClaimIndexes(DB); err != nil {
+		return err
+	}
+	if err := ensurePaymentCampaignParticipantIndexes(DB); err != nil {
+		return err
+	}
+	if err := migratePaymentCampaignParticipants(); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {

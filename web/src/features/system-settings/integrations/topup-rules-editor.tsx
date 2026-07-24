@@ -39,6 +39,9 @@ type TopupPackageRule = {
   credit_amount: number
   enabled: boolean
   sort_order: number
+  selling_points: string[]
+  footer_note: string
+  visual_style: string
 }
 
 type SupportContactRule = {
@@ -61,6 +64,7 @@ type CampaignRule = {
   max_claims_per_user: number
   max_claims_per_email: number
   max_claims_total: number
+  max_participants_total: number
   reservation_minutes: number
   reward_mode: 'target_total_percent' | 'fixed_bonus'
   reward_percent: number
@@ -78,6 +82,13 @@ type CampaignStats = {
   awarded: number
   reserved: number
   remaining: number
+  participant_limited: boolean
+  participants_total: number
+  participants_admitted: number
+  participants_reserved: number
+  participants_remaining: number
+  claims_awarded: number
+  claims_reserved: number
 }
 
 type CampaignStatsResponse = {
@@ -89,6 +100,7 @@ type CampaignStatsResponse = {
 const DEFAULT_MAX_CLAIMS_PER_EMAIL = 1
 const DEFAULT_MAX_CLAIMS_TOTAL = 100
 const DEFAULT_RESERVATION_MINUTES = 3
+const SELLING_POINT_SLOT_KEYS = ['first', 'second', 'third'] as const
 
 function parseArray<T>(value: string): T[] {
   try {
@@ -105,6 +117,7 @@ function normalizeCampaign(campaign: CampaignRule): CampaignRule {
     max_claims_per_email:
       campaign.max_claims_per_email ?? DEFAULT_MAX_CLAIMS_PER_EMAIL,
     max_claims_total: campaign.max_claims_total ?? DEFAULT_MAX_CLAIMS_TOTAL,
+    max_participants_total: campaign.max_participants_total ?? 0,
     reservation_minutes:
       campaign.reservation_minutes ?? DEFAULT_RESERVATION_MINUTES,
   }
@@ -142,7 +155,23 @@ export function TopupRulesEditor({
 }: TopupRulesEditorProps) {
   const { t } = useTranslation()
   const packages = useMemo(
-    () => parseArray<TopupPackageRule>(packagesValue),
+    () =>
+      parseArray<TopupPackageRule>(packagesValue).map((p) => ({
+        ...p,
+        selling_points: Array.isArray(p.selling_points)
+          ? p.selling_points
+              .filter((point): point is string => typeof point === 'string')
+              .slice(0, 3)
+          : [],
+        footer_note: typeof p.footer_note === 'string' ? p.footer_note : '',
+        visual_style:
+          typeof p.visual_style === 'string' &&
+          ['default', 'recommended', 'popular', 'value'].includes(
+            p.visual_style
+          )
+            ? p.visual_style
+            : 'default',
+      })),
     [packagesValue]
   )
   const campaigns = useMemo(
@@ -229,6 +258,7 @@ export function TopupRulesEditor({
         max_claims_per_user: 1,
         max_claims_per_email: DEFAULT_MAX_CLAIMS_PER_EMAIL,
         max_claims_total: DEFAULT_MAX_CLAIMS_TOTAL,
+        max_participants_total: 0,
         reservation_minutes: DEFAULT_RESERVATION_MINUTES,
         reward_mode: 'target_total_percent',
         reward_percent: 10,
@@ -256,6 +286,9 @@ export function TopupRulesEditor({
         enabled: false,
         sort_order:
           Math.max(0, ...packages.map((item) => item.sort_order || 0)) + 10,
+        selling_points: [],
+        footer_note: '',
+        visual_style: 'default',
       },
     ]
     onPackagesChange(JSON.stringify(next, null, 2))
@@ -449,6 +482,105 @@ export function TopupRulesEditor({
                     }
                   />
                 </Field>
+                <Field label={t('Sort order')}>
+                  <Input
+                    type='number'
+                    min={0}
+                    step={10}
+                    value={item.sort_order}
+                    onChange={(event) =>
+                      updatePackage(index, {
+                        sort_order: Number(event.target.value),
+                      })
+                    }
+                  />
+                </Field>
+                <Field label={t('Visual style')} className='sm:col-span-2'>
+                  <select
+                    className='border-input bg-background h-9 w-full rounded-md border px-3 text-sm'
+                    value={item.visual_style || 'default'}
+                    onChange={(event) =>
+                      updatePackage(index, {
+                        visual_style: event.target.value,
+                      })
+                    }
+                  >
+                    <option value='default'>{t('Default')}</option>
+                    <option value='recommended'>{t('Recommended')}</option>
+                    <option value='popular'>{t('Popular')}</option>
+                    <option value='value'>{t('Value')}</option>
+                  </select>
+                </Field>
+                {item.selling_points.map((point, pointIndex) => (
+                  <Field
+                    key={`${item.id}-selling-point-${SELLING_POINT_SLOT_KEYS[pointIndex]}`}
+                    label={`${t('Selling point')} ${pointIndex + 1}`}
+                    className='sm:col-span-2'
+                  >
+                    <div className='flex gap-2'>
+                      <Input
+                        value={point}
+                        maxLength={80}
+                        onChange={(event) =>
+                          updatePackage(index, {
+                            selling_points: item.selling_points.map((p, i) =>
+                              i === pointIndex ? event.target.value : p
+                            ),
+                          })
+                        }
+                      />
+                      <Button
+                        type='button'
+                        size='icon'
+                        variant='ghost'
+                        aria-label={t('Delete selling point')}
+                        onClick={() =>
+                          updatePackage(index, {
+                            selling_points: item.selling_points.filter(
+                              (_p, i) => i !== pointIndex
+                            ),
+                          })
+                        }
+                      >
+                        <Trash2 className='size-4' />
+                      </Button>
+                    </div>
+                  </Field>
+                ))}
+                {item.selling_points.length < 3 && (
+                  <div className='sm:col-span-2'>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={() =>
+                        updatePackage(index, {
+                          selling_points: [...item.selling_points, ''],
+                        })
+                      }
+                    >
+                      <Plus className='size-4' />
+                      {t('Add selling point')}
+                    </Button>
+                  </div>
+                )}
+                <Field label={t('Footer note')} className='sm:col-span-2'>
+                  <Input
+                    value={item.footer_note ?? ''}
+                    maxLength={120}
+                    placeholder={t('Optional footer text')}
+                    onChange={(event) =>
+                      updatePackage(index, {
+                        footer_note: event.target.value,
+                      })
+                    }
+                  />
+                </Field>
+                <div className='text-muted-foreground text-xs sm:col-span-2'>
+                  {t(
+                    'Campaign bonus and expiry is managed in campaign settings'
+                  )}
+                </div>
               </CardContent>
             </Card>
           ))}
@@ -587,7 +719,9 @@ export function TopupRulesEditor({
                   }
                 >
                   <option value='per_campaign'>{t('Once per campaign')}</option>
-                  <option value='per_package'>{t('Once per package')}</option>
+                  <option value='per_package'>
+                    {t('Once per package per account')}
+                  </option>
                   <option value='unlimited'>{t('Unlimited')}</option>
                 </select>
               </Field>
@@ -631,6 +765,22 @@ export function TopupRulesEditor({
                   onChange={(event) =>
                     updateCampaign(index, {
                       max_claims_total: Math.max(0, Number(event.target.value)),
+                    })
+                  }
+                />
+              </Field>
+              <Field label={t('Maximum participants (0 = unlimited)')}>
+                <Input
+                  type='number'
+                  min={0}
+                  step={1}
+                  value={campaign.max_participants_total}
+                  onChange={(event) =>
+                    updateCampaign(index, {
+                      max_participants_total: Math.max(
+                        0,
+                        Number(event.target.value)
+                      ),
                     })
                   }
                 />
@@ -784,20 +934,57 @@ function CampaignStatsPanel({ stats }: { stats?: CampaignStats }) {
   const { t } = useTranslation()
   let totalSlots: number | string = '—'
   let remainingSlots: number | string = '—'
+  let participantTotal: number | string = '—'
+  let participantRemaining: number | string = '—'
   if (stats) {
     totalSlots = stats.limited ? stats.total : t('Unlimited')
     remainingSlots = stats.limited ? stats.remaining : t('Unlimited')
+    participantTotal = stats.participant_limited
+      ? stats.participants_total
+      : t('Unlimited')
+    participantRemaining = stats.participant_limited
+      ? stats.participants_remaining
+      : t('Unlimited')
   }
 
   return (
-    <div className='grid grid-cols-2 gap-3 rounded-md border p-3 md:col-span-2 lg:grid-cols-4'>
-      <CampaignStat label={t('Total slots')} value={totalSlots} />
-      <CampaignStat label={t('Used slots')} value={stats?.awarded ?? '—'} />
-      <CampaignStat
-        label={t('Payments in progress')}
-        value={stats?.reserved ?? '—'}
-      />
-      <CampaignStat label={t('Remaining slots')} value={remainingSlots} />
+    <div className='space-y-3 rounded-md border p-3 md:col-span-2'>
+      <div className='text-muted-foreground text-xs font-medium'>
+        {t('Campaign participant stats')}
+      </div>
+      <div className='grid grid-cols-2 gap-3 lg:grid-cols-4'>
+        <CampaignStat
+          label={t('Maximum participants (0 = unlimited)')}
+          value={participantTotal}
+        />
+        <CampaignStat
+          label={t('Admitted accounts')}
+          value={stats?.participants_admitted ?? '—'}
+        />
+        <CampaignStat
+          label={t('Reserved accounts')}
+          value={stats?.participants_reserved ?? '—'}
+        />
+        <CampaignStat
+          label={t('Remaining participant slots')}
+          value={participantRemaining}
+        />
+      </div>
+      <div className='text-muted-foreground text-xs font-medium'>
+        {t('Claim stats')}
+      </div>
+      <div className='grid grid-cols-2 gap-3 lg:grid-cols-4'>
+        <CampaignStat label={t('Total slots')} value={totalSlots} />
+        <CampaignStat
+          label={t('Awarded claims')}
+          value={stats?.claims_awarded ?? '—'}
+        />
+        <CampaignStat
+          label={t('Reserved claims')}
+          value={stats?.claims_reserved ?? '—'}
+        />
+        <CampaignStat label={t('Remaining slots')} value={remainingSlots} />
+      </div>
     </div>
   )
 }

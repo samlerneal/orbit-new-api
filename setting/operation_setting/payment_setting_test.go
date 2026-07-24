@@ -2,6 +2,7 @@ package operation_setting
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 
@@ -12,28 +13,53 @@ import (
 
 func validCampaignForSafeguardTest() PaymentCampaign {
 	return PaymentCampaign{
-		ID:                 "safeguard-test",
-		Name:               "Safeguard test",
-		Eligibility:        CampaignEligibilityPerCampaign,
-		MaxClaimsPerUser:   1,
-		MaxClaimsPerEmail:  1,
-		MaxClaimsTotal:     100,
-		ReservationMinutes: 3,
-		RewardMode:         CampaignRewardTargetTotalPercent,
-		RewardPercent:      30,
-		RoundingMode:       CampaignRoundingCeilYuan,
-		ValidDays:          45,
+		ID:                   "safeguard-test",
+		Name:                 "Safeguard test",
+		Eligibility:          CampaignEligibilityPerCampaign,
+		MaxClaimsPerUser:     1,
+		MaxClaimsPerEmail:    1,
+		MaxClaimsTotal:       100,
+		MaxParticipantsTotal: 0,
+		ReservationMinutes:   3,
+		RewardMode:           CampaignRewardTargetTotalPercent,
+		RewardPercent:        30,
+		RoundingMode:         CampaignRoundingCeilYuan,
+		ValidDays:            45,
 	}
 }
 
 func TestNormalizeLegacyLaunchCampaignAddsSafeDefaults(t *testing.T) {
 	campaign := normalizeLegacyCampaignSafeguards(PaymentCampaign{
-		ID: "launch-first-topup-30",
+		ID:                   "launch-first-topup-30",
+		MaxClaimsPerEmail:    0,
+		MaxClaimsTotal:       100,
+		MaxParticipantsTotal: 0,
+		ReservationMinutes:   0,
+		Eligibility:          CampaignEligibilityPerCampaign,
 	})
 
 	assert.Equal(t, 1, campaign.MaxClaimsPerEmail)
-	assert.Equal(t, 100, campaign.MaxClaimsTotal)
+	assert.Equal(t, 100, campaign.MaxParticipantsTotal)
+	assert.Equal(t, 0, campaign.MaxClaimsTotal)
 	assert.Equal(t, 3, campaign.ReservationMinutes)
+	assert.Equal(t, CampaignEligibilityPerPackage, campaign.Eligibility)
+}
+
+func TestNormalizeLegacyCampaignWithReservationMinutesConvertsEligibility(t *testing.T) {
+	campaign := normalizeLegacyCampaignSafeguards(PaymentCampaign{
+		ID:                   "launch-first-topup-30",
+		MaxClaimsPerEmail:    0,
+		MaxClaimsTotal:       100,
+		MaxParticipantsTotal: 0,
+		ReservationMinutes:   3,
+		Eligibility:          CampaignEligibilityPerCampaign,
+	})
+
+	assert.Equal(t, 1, campaign.MaxClaimsPerEmail)
+	assert.Equal(t, 100, campaign.MaxParticipantsTotal)
+	assert.Equal(t, 0, campaign.MaxClaimsTotal)
+	assert.Equal(t, 3, campaign.ReservationMinutes)
+	assert.Equal(t, CampaignEligibilityPerPackage, campaign.Eligibility)
 }
 
 func TestGetPaymentCampaignsReturnsDeepCopy(t *testing.T) {
@@ -104,6 +130,98 @@ func TestValidatePaymentCampaignSafeguards(t *testing.T) {
 	campaign.ReservationMinutes = 1441
 	assert.Error(t, ValidatePaymentCampaigns([]PaymentCampaign{campaign}, packages))
 	campaign.ReservationMinutes = 0
+	assert.Error(t, ValidatePaymentCampaigns([]PaymentCampaign{campaign}, packages))
+}
+
+func TestValidateTopupPackagesSellingPointsAndFooterNoteAndVisualStyle(t *testing.T) {
+	packages := []TopupPackage{{
+		ID: "valid", Name: "Valid", PayAmount: 98, CreditAmount: 100,
+		SellingPoints: []string{"卖点1", "卖点2"},
+		FooterNote:    "底部说明文字",
+		VisualStyle:   "recommended",
+	}}
+
+	// valid
+	require.NoError(t, ValidateTopupPackages(packages))
+
+	// too many selling points
+	bad := []TopupPackage{{
+		ID: "too-many", Name: "Bad", PayAmount: 98, CreditAmount: 100,
+		SellingPoints: []string{"a", "b", "c", "d"},
+	}}
+	assert.Error(t, ValidateTopupPackages(bad))
+
+	// selling point too long
+	bad2 := []TopupPackage{{
+		ID: "too-long", Name: "Bad", PayAmount: 98, CreditAmount: 100,
+		SellingPoints: []string{strings.Repeat("x", 81)},
+	}}
+	assert.Error(t, ValidateTopupPackages(bad2))
+
+	// footer note too long
+	bad3 := []TopupPackage{{
+		ID: "footer-long", Name: "Bad", PayAmount: 98, CreditAmount: 100,
+		FooterNote: strings.Repeat("x", 121),
+	}}
+	assert.Error(t, ValidateTopupPackages(bad3))
+
+	// invalid visual style
+	bad4 := []TopupPackage{{
+		ID: "bad-style", Name: "Bad", PayAmount: 98, CreditAmount: 100,
+		VisualStyle: "gold",
+	}}
+	assert.Error(t, ValidateTopupPackages(bad4))
+
+	// empty visual style = default (valid)
+	okEmpty := []TopupPackage{{
+		ID: "empty-style", Name: "OK", PayAmount: 98, CreditAmount: 100,
+		VisualStyle: "",
+	}}
+	require.NoError(t, ValidateTopupPackages(okEmpty))
+}
+func TestValidateTopupPackagesRejectsForbiddenContent(t *testing.T) {
+	for name, content := range map[string]string{
+		"html":             "<script>alert(1)</script>",
+		"markdown-link":    "[click](https://evil.com)",
+		"markdown-bold":    "**bold**",
+		"javascript":       "javascript:alert(1)",
+		"event-handler":    "onmouseover=alert(1)",
+		"css-attribute":    "class=red large",
+		"css-selector":     ".text-red-500",
+		"tailwind-class":   "bg-red-500",
+		"hex-color":        "#fff",
+		"functional-color": "rgb(255, 0, 0)",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Error(t, ValidateTopupPackages([]TopupPackage{{
+				ID: "forbidden", Name: "Bad", PayAmount: 98, CreditAmount: 100,
+				SellingPoints: []string{content},
+			}}))
+		})
+	}
+
+	assert.Error(t, ValidateTopupPackages([]TopupPackage{{
+		ID: "name", Name: "**Bad**", PayAmount: 98, CreditAmount: 100,
+	}}))
+	assert.Error(t, ValidateTopupPackages([]TopupPackage{{
+		ID: "duplicate", Name: "Bad", PayAmount: 98, CreditAmount: 100,
+		SellingPoints: []string{"支持主流模型", " 支持主流模型 "},
+	}}))
+	require.NoError(t, ValidateTopupPackages([]TopupPackage{{
+		ID: "clean", Name: "Clean", PayAmount: 98, CreditAmount: 100,
+		SellingPoints: []string{"支持主流模型", "赠送余额"},
+		FooterNote:    "活动最终解释权归平台所有",
+	}}))
+}
+
+func TestValidatePaymentCampaignsRejectsForbiddenDisplayText(t *testing.T) {
+	packages := []TopupPackage{{
+		ID: "advanced", Name: "Advanced", PayAmount: 98, CreditAmount: 100,
+	}}
+	campaign := validCampaignForSafeguardTest()
+	campaign.PackageIDs = []string{"advanced"}
+	campaign.BannerText = "onmouseover=alert(1)"
+
 	assert.Error(t, ValidatePaymentCampaigns([]PaymentCampaign{campaign}, packages))
 }
 

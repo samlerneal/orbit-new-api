@@ -121,7 +121,7 @@ export function Wallet(props: WalletProps) {
                 </TabsTrigger>
                 <TabsTrigger
                   value='monthly-subscription'
-                  className='data-[state=active]:bg-background min-h-11 gap-2 rounded-lg opacity-55 disabled:opacity-55'
+                  className='data-[state=active]:bg-background min-h-11 gap-2 rounded-lg opacity-55'
                   disabled
                 >
                   <CalendarDays className='size-4' />

@@ -22,6 +22,8 @@ import { describe, test } from 'node:test'
 import {
   canSubmitPackagePayment,
   createPackagePaymentRequest,
+  getTopupPackageVisualStyleClasses,
+  isTopupPackageVisualStyle,
   REFUND_NOTICE_VERSION,
 } from './types.ts'
 
@@ -46,5 +48,28 @@ describe('package payment refund notice gate', () => {
       refund_notice_version: 'refund-notice-v1',
       refund_notice_language: 'zhCN',
     })
+  })
+})
+
+describe('top-up package visual styles', () => {
+  test('accepts only the four controlled presets', () => {
+    assert.equal(isTopupPackageVisualStyle('default'), true)
+    assert.equal(isTopupPackageVisualStyle('recommended'), true)
+    assert.equal(isTopupPackageVisualStyle('popular'), true)
+    assert.equal(isTopupPackageVisualStyle('value'), true)
+    assert.equal(isTopupPackageVisualStyle('bg-red-500'), false)
+  })
+
+  test('maps every preset to a fixed style and falls back safely', () => {
+    const recommended = getTopupPackageVisualStyleClasses('recommended')
+    const popular = getTopupPackageVisualStyleClasses('popular')
+    const value = getTopupPackageVisualStyleClasses('value')
+
+    assert.notEqual(recommended, '')
+    assert.notEqual(popular, '')
+    assert.notEqual(value, '')
+    assert.notEqual(recommended, popular)
+    assert.notEqual(popular, value)
+    assert.equal(getTopupPackageVisualStyleClasses('bg-red-500'), '')
   })
 })
