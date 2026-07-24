@@ -100,10 +100,10 @@ var paymentSetting = PaymentSetting{
 	AmountOptions:  []int{10, 20, 50, 100, 200, 500},
 	AmountDiscount: map[int]float64{},
 	TopupPackages: []TopupPackage{
-		{ID: "experience", Name: "体验档", Description: "适合日常对话", PayAmount: 14, CreditAmount: 14, Enabled: true, SortOrder: 10},
-		{ID: "standard", Name: "标准档", Description: "适合解决复杂问题", Tag: "每日之选", PayAmount: 49, CreditAmount: 50, Enabled: true, SortOrder: 20},
-		{ID: "advanced", Name: "进阶档", Description: "适合频繁使用", Tag: "最受欢迎", PayAmount: 98, CreditAmount: 100, Enabled: true, SortOrder: 30},
-		{ID: "professional", Name: "专业档", Description: "为专业开发者打造", Tag: "高量超值", PayAmount: 490, CreditAmount: 500, Enabled: true, SortOrder: 40},
+		{ID: "experience", Name: "体验", Description: "适合日常对话", PayAmount: 14, CreditAmount: 14, Enabled: true, SortOrder: 10},
+		{ID: "standard", Name: "标准", Description: "适合解决复杂问题", Tag: "人气之选", PayAmount: 49, CreditAmount: 50, Enabled: true, SortOrder: 20},
+		{ID: "advanced", Name: "进阶", Description: "适合频繁使用", Tag: "最受欢迎", PayAmount: 98, CreditAmount: 100, Enabled: true, SortOrder: 30},
+		{ID: "professional", Name: "专业", Description: "为专业开发者打造", Tag: "高量超值", PayAmount: 490, CreditAmount: 500, Enabled: true, SortOrder: 40},
 	},
 	Campaigns: []PaymentCampaign{
 		{

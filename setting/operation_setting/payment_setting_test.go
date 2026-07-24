@@ -45,6 +45,31 @@ func TestNormalizeLegacyLaunchCampaignAddsSafeDefaults(t *testing.T) {
 	assert.Equal(t, CampaignEligibilityPerPackage, campaign.Eligibility)
 }
 
+func TestDefaultTopupPackagesUseCurrentChineseCopy(t *testing.T) {
+	packages := GetTopupPackages()
+	require.Len(t, packages, 4)
+
+	expected := []TopupPackage{
+		{ID: "experience", Name: "体验", Description: "适合日常对话", PayAmount: 14, CreditAmount: 14, Enabled: true, SortOrder: 10},
+		{ID: "standard", Name: "标准", Description: "适合解决复杂问题", Tag: "人气之选", PayAmount: 49, CreditAmount: 50, Enabled: true, SortOrder: 20},
+		{ID: "advanced", Name: "进阶", Description: "适合频繁使用", Tag: "最受欢迎", PayAmount: 98, CreditAmount: 100, Enabled: true, SortOrder: 30},
+		{ID: "professional", Name: "专业", Description: "为专业开发者打造", Tag: "高量超值", PayAmount: 490, CreditAmount: 500, Enabled: true, SortOrder: 40},
+	}
+
+	for index, want := range expected {
+		got := packages[index]
+		assert.Equal(t, want.ID, got.ID)
+		assert.Equal(t, want.Name, got.Name)
+		assert.Equal(t, want.Description, got.Description)
+		assert.Equal(t, want.Tag, got.Tag)
+		assert.Equal(t, want.PayAmount, got.PayAmount)
+		assert.Equal(t, want.CreditAmount, got.CreditAmount)
+		assert.Equal(t, want.Enabled, got.Enabled)
+		assert.Equal(t, want.SortOrder, got.SortOrder)
+		assert.NotContains(t, got.Name, "档")
+	}
+}
+
 func TestNormalizeLegacyCampaignWithReservationMinutesConvertsEligibility(t *testing.T) {
 	campaign := normalizeLegacyCampaignSafeguards(PaymentCampaign{
 		ID:                   "launch-first-topup-30",
