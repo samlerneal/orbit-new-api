@@ -114,20 +114,22 @@ export function Wallet(props: WalletProps) {
               <TabsList className='bg-muted/60 grid h-auto w-full grid-cols-2 rounded-xl p-1 dark:bg-white/5'>
                 <TabsTrigger
                   value='pay-as-you-go'
-                  className='data-[state=active]:bg-background min-h-11 gap-2 rounded-lg data-[state=active]:shadow-sm dark:data-[state=active]:bg-white/10'
+                  className='data-active:bg-background min-h-11 gap-2 rounded-lg data-active:shadow-sm dark:data-active:bg-white/10'
                 >
                   <Coins className='size-4' />
                   {t('Pay as you go')}
                 </TabsTrigger>
                 <TabsTrigger
                   value='monthly-subscription'
-                  className='data-[state=active]:bg-background min-h-11 gap-2 rounded-lg opacity-55'
+                  className='data-active:bg-background min-h-11 gap-2 rounded-lg disabled:opacity-100 aria-disabled:opacity-100'
                   disabled
                 >
-                  <CalendarDays className='size-4' />
-                  {t('Monthly subscription')}
-                  <span className='text-muted-foreground text-xs'>
-                    {t('Coming soon')}
+                  <span className='inline-flex items-center gap-2 opacity-55'>
+                    <CalendarDays className='size-4' />
+                    {t('Monthly subscription')}
+                    <span className='text-muted-foreground text-xs'>
+                      {t('Coming soon')}
+                    </span>
                   </span>
                 </TabsTrigger>
               </TabsList>

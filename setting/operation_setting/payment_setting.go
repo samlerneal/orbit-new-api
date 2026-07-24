@@ -109,9 +109,9 @@ var paymentSetting = PaymentSetting{
 		{
 			ID:                   "launch-first-topup-30",
 			Name:                 "Launch first top-up",
-			BannerTitle:          "First top-up bonus: 30%",
-			BannerText:           "Complete your first top-up in this campaign to receive time-limited bonus balance.",
-			BadgeText:            "First top-up +30%",
+			BannerTitle:          "Limited four-package bonus: 30%",
+			BannerText:           "Each account can receive the campaign bonus once per eligible package.",
+			BadgeText:            "Limited bonus +30%",
 			Enabled:              false,
 			PackageIDs:           []string{"experience", "standard", "advanced", "professional"},
 			Eligibility:          CampaignEligibilityPerPackage,
@@ -193,6 +193,22 @@ func GetSupportContacts() []SupportContact {
 func normalizeLegacyCampaignSafeguards(campaign PaymentCampaign) PaymentCampaign {
 	if campaign.ReservationMinutes <= 0 {
 		campaign.ReservationMinutes = DefaultCampaignReservationMinutes
+	}
+	// Compatibility normalization: exact-match legacy campaign text
+	// is mapped to the current four-package wording at read time.
+	// This must run before the per-campaign migration block below
+	// because that block returns early, and the text mapping must
+	// apply regardless of which eligibility branch is taken.
+	// Admins who have customized any of these fields are never
+	// affected; the normalized values will be persisted the next
+	// time the admin saves the campaign.
+	if campaign.ID == "launch-first-topup-30" &&
+		campaign.BannerTitle == "First top-up bonus: 30%" &&
+		campaign.BannerText == "Complete your first top-up in this campaign to receive time-limited bonus balance." &&
+		campaign.BadgeText == "First top-up +30%" {
+		campaign.BannerTitle = "Limited four-package bonus: 30%"
+		campaign.BannerText = "Each account can receive the campaign bonus once per eligible package."
+		campaign.BadgeText = "Limited bonus +30%"
 	}
 	// Compatibility migration: per_campaign activity configs with
 	// max_claims_total become per_package with participant capacity.

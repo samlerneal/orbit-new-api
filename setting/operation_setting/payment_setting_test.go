@@ -307,3 +307,115 @@ func TestPaymentCampaignReadsAndUpdatesShareConfigLock(t *testing.T) {
 	close(start)
 	waitGroup.Wait()
 }
+
+func TestNormalizeLegacyCampaignTextExactMatchAllThreeFields(t *testing.T) {
+	campaign := normalizeLegacyCampaignSafeguards(PaymentCampaign{
+		ID:                   "launch-first-topup-30",
+		BannerTitle:          "First top-up bonus: 30%",
+		BannerText:           "Complete your first top-up in this campaign to receive time-limited bonus balance.",
+		BadgeText:            "First top-up +30%",
+		Eligibility:          CampaignEligibilityPerPackage,
+		MaxClaimsPerEmail:    1,
+		MaxParticipantsTotal: 100,
+		ReservationMinutes:   3,
+	})
+
+	assert.Equal(t, "Limited four-package bonus: 30%", campaign.BannerTitle)
+	assert.Equal(t, "Each account can receive the campaign bonus once per eligible package.", campaign.BannerText)
+	assert.Equal(t, "Limited bonus +30%", campaign.BadgeText)
+}
+
+func TestNormalizeLegacyCampaignTextPreservesCustomizedBannerTitle(t *testing.T) {
+	campaign := normalizeLegacyCampaignSafeguards(PaymentCampaign{
+		ID:                   "launch-first-topup-30",
+		BannerTitle:          "Custom banner title",
+		BannerText:           "Complete your first top-up in this campaign to receive time-limited bonus balance.",
+		BadgeText:            "First top-up +30%",
+		Eligibility:          CampaignEligibilityPerPackage,
+		MaxClaimsPerEmail:    1,
+		MaxParticipantsTotal: 100,
+		ReservationMinutes:   3,
+	})
+
+	assert.Equal(t, "Custom banner title", campaign.BannerTitle)
+	assert.Equal(t, "Complete your first top-up in this campaign to receive time-limited bonus balance.", campaign.BannerText)
+	assert.Equal(t, "First top-up +30%", campaign.BadgeText)
+}
+
+func TestNormalizeLegacyCampaignTextPreservesCustomizedBadgeText(t *testing.T) {
+	campaign := normalizeLegacyCampaignSafeguards(PaymentCampaign{
+		ID:                   "launch-first-topup-30",
+		BannerTitle:          "First top-up bonus: 30%",
+		BannerText:           "Complete your first top-up in this campaign to receive time-limited bonus balance.",
+		BadgeText:            "Custom badge",
+		Eligibility:          CampaignEligibilityPerPackage,
+		MaxClaimsPerEmail:    1,
+		MaxParticipantsTotal: 100,
+		ReservationMinutes:   3,
+	})
+
+	assert.Equal(t, "First top-up bonus: 30%", campaign.BannerTitle)
+	assert.Equal(t, "Complete your first top-up in this campaign to receive time-limited bonus balance.", campaign.BannerText)
+	assert.Equal(t, "Custom badge", campaign.BadgeText)
+}
+
+func TestNormalizeLegacyCampaignTextSkipsNonLaunchCampaign(t *testing.T) {
+	campaign := normalizeLegacyCampaignSafeguards(PaymentCampaign{
+		ID:                   "other-campaign",
+		BannerTitle:          "First top-up bonus: 30%",
+		BannerText:           "Complete your first top-up in this campaign to receive time-limited bonus balance.",
+		BadgeText:            "First top-up +30%",
+		Eligibility:          CampaignEligibilityPerPackage,
+		MaxClaimsPerEmail:    1,
+		MaxParticipantsTotal: 100,
+		ReservationMinutes:   3,
+	})
+
+	assert.Equal(t, "First top-up bonus: 30%", campaign.BannerTitle)
+	assert.Equal(t, "Complete your first top-up in this campaign to receive time-limited bonus balance.", campaign.BannerText)
+	assert.Equal(t, "First top-up +30%", campaign.BadgeText)
+}
+
+func TestNormalizeLegacyCampaignTextAlreadyNewValuesIsNoop(t *testing.T) {
+	campaign := normalizeLegacyCampaignSafeguards(PaymentCampaign{
+		ID:                   "launch-first-topup-30",
+		BannerTitle:          "Limited four-package bonus: 30%",
+		BannerText:           "Each account can receive the campaign bonus once per eligible package.",
+		BadgeText:            "Limited bonus +30%",
+		Eligibility:          CampaignEligibilityPerPackage,
+		MaxClaimsPerEmail:    1,
+		MaxParticipantsTotal: 100,
+		ReservationMinutes:   3,
+	})
+
+	assert.Equal(t, "Limited four-package bonus: 30%", campaign.BannerTitle)
+	assert.Equal(t, "Each account can receive the campaign bonus once per eligible package.", campaign.BannerText)
+	assert.Equal(t, "Limited bonus +30%", campaign.BadgeText)
+}
+
+func TestNormalizeLegacyCampaignTextWithOldEligibilityMigratesBoth(t *testing.T) {
+	// Regression: old per_campaign eligibility with max_claims_total > 0
+	// used to return early before the text normalization ran.
+	// This test asserts both the eligibility migration AND text
+	// normalization are applied when all legacy fields match.
+	campaign := normalizeLegacyCampaignSafeguards(PaymentCampaign{
+		ID:                   "launch-first-topup-30",
+		BannerTitle:          "First top-up bonus: 30%",
+		BannerText:           "Complete your first top-up in this campaign to receive time-limited bonus balance.",
+		BadgeText:            "First top-up +30%",
+		Eligibility:          CampaignEligibilityPerCampaign,
+		MaxClaimsPerEmail:    0,
+		MaxClaimsTotal:       100,
+		MaxParticipantsTotal: 0,
+		ReservationMinutes:   0,
+	})
+
+	assert.Equal(t, "Limited four-package bonus: 30%", campaign.BannerTitle)
+	assert.Equal(t, "Each account can receive the campaign bonus once per eligible package.", campaign.BannerText)
+	assert.Equal(t, "Limited bonus +30%", campaign.BadgeText)
+	assert.Equal(t, 1, campaign.MaxClaimsPerEmail)
+	assert.Equal(t, 100, campaign.MaxParticipantsTotal)
+	assert.Equal(t, 0, campaign.MaxClaimsTotal)
+	assert.Equal(t, 3, campaign.ReservationMinutes)
+	assert.Equal(t, CampaignEligibilityPerPackage, campaign.Eligibility)
+}

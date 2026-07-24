@@ -84,25 +84,32 @@ export function TopupPackageGrid(props: TopupPackageGridProps) {
           className='border-amber-200 bg-amber-50/70 text-amber-950 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-100'
         >
           <Sparkles className='size-4' />
-          <AlertTitle className='flex items-center justify-between gap-3'>
-            <span>{t(campaign.title)}</span>
-            <Badge variant='outline' className='shrink-0 border-amber-300'>
-              {t('Maximum bonus {{amount}}', {
-                amount: formatLocalCurrencyAmount(
-                  campaign.cumulative_max_bonus || campaign.max_bonus
-                ),
-              })}
-            </Badge>
-          </AlertTitle>
-          {campaign.participant_limited && (
-            <AlertDescription className='mt-1 font-medium'>
-              {t('Limited {{total}} accounts, {{remaining}} spots remaining', {
-                total: campaign.participant_total,
-                remaining: campaign.participant_remaining,
-              })}
-            </AlertDescription>
-          )}
-          <AlertDescription>{t(campaign.description)}</AlertDescription>
+          <div className='col-start-2 min-w-0'>
+            <div className='flex flex-wrap items-center justify-between gap-3'>
+              <AlertTitle className='min-w-0 flex-1 p-0'>
+                {t(campaign.title)}
+              </AlertTitle>
+              <Badge variant='outline' className='shrink-0 border-amber-300'>
+                {t('Cumulative bonus up to {{amount}}', {
+                  amount: formatLocalCurrencyAmount(
+                    campaign.cumulative_max_bonus || campaign.max_bonus
+                  ),
+                })}
+              </Badge>
+            </div>
+            {campaign.participant_limited && (
+              <AlertDescription className='mt-1 font-medium'>
+                {t(
+                  'Limited {{total}} accounts, {{remaining}} spots remaining',
+                  {
+                    total: campaign.participant_total,
+                    remaining: campaign.participant_remaining,
+                  }
+                )}
+              </AlertDescription>
+            )}
+            <AlertDescription>{t(campaign.description)}</AlertDescription>
+          </div>
         </Alert>
       ))}
 

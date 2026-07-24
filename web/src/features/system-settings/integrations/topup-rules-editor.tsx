@@ -123,6 +123,25 @@ function normalizeCampaign(campaign: CampaignRule): CampaignRule {
   }
 }
 
+function normalizeLegacyCampaignText(campaign: CampaignRule): CampaignRule {
+  if (
+    campaign.id === 'launch-first-topup-30' &&
+    campaign.banner_title === 'First top-up bonus: 30%' &&
+    campaign.banner_text ===
+      'Complete your first top-up in this campaign to receive time-limited bonus balance.' &&
+    campaign.badge_text === 'First top-up +30%'
+  ) {
+    return {
+      ...campaign,
+      banner_title: 'Limited four-package bonus: 30%',
+      banner_text:
+        'Each account can receive the campaign bonus once per eligible package.',
+      badge_text: 'Limited bonus +30%',
+    }
+  }
+  return campaign
+}
+
 function toDateTimeLocal(timestamp: number) {
   if (!timestamp) return ''
   const date = new Date(timestamp * 1000)
@@ -175,7 +194,10 @@ export function TopupRulesEditor({
     [packagesValue]
   )
   const campaigns = useMemo(
-    () => parseArray<CampaignRule>(campaignsValue).map(normalizeCampaign),
+    () =>
+      parseArray<CampaignRule>(campaignsValue)
+        .map(normalizeCampaign)
+        .map(normalizeLegacyCampaignText),
     [campaignsValue]
   )
   const supportContacts = useMemo(
