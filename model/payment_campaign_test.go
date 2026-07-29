@@ -858,3 +858,30 @@ func TestExpiredBonusIsNotSpendable(t *testing.T) {
 	_, err = PreConsumeWalletFunds("expired-order", user.Id, 51)
 	assert.Error(t, err)
 }
+
+func TestGetBonusBalanceSummariesUsesSharedNowAndIgnoresInvalidLots(t *testing.T) {
+	setupEpayTopupTestDB(t)
+	now := int64(1_000)
+	first := User{Username: "summary-first", AffCode: "summary-first", Quota: 300}
+	second := User{Username: "summary-second", AffCode: "summary-second", Quota: 400}
+	require.NoError(t, DB.Create(&first).Error)
+	require.NoError(t, DB.Create(&second).Error)
+	require.NoError(t, DB.Create([]BonusBalance{
+		{UserId: first.Id, CampaignId: "first-valid", TopUpId: 1, Status: BonusBalanceStatusActive, AmountTotal: 100, AmountUsed: 25, ExpiresAt: now + 100},
+		{UserId: first.Id, CampaignId: "second-valid", TopUpId: 2, Status: BonusBalanceStatusActive, AmountTotal: 50, AmountUsed: 0, ExpiresAt: now + 50},
+		{UserId: first.Id, CampaignId: "boundary", TopUpId: 3, Status: BonusBalanceStatusActive, AmountTotal: 999, AmountUsed: 0, ExpiresAt: now},
+		{UserId: first.Id, CampaignId: "used-up", TopUpId: 4, Status: BonusBalanceStatusActive, AmountTotal: 999, AmountUsed: 999, ExpiresAt: now + 10},
+		{UserId: first.Id, CampaignId: "expired", TopUpId: 5, Status: BonusBalanceStatusExpired, AmountTotal: 999, AmountUsed: 0, ExpiresAt: now + 1},
+		{UserId: second.Id, CampaignId: "third-valid", TopUpId: 6, Status: BonusBalanceStatusActive, AmountTotal: 20, AmountUsed: 5, ExpiresAt: now + 200},
+	}).Error)
+
+	summaries, err := GetBonusBalanceSummaries([]int{first.Id, second.Id}, now)
+	require.NoError(t, err)
+	assert.Equal(t, BonusBalanceSummary{ActiveQuota: 125, NearestExpiresAt: now + 50}, summaries[first.Id])
+	assert.Equal(t, BonusBalanceSummary{ActiveQuota: 15, NearestExpiresAt: now + 200}, summaries[second.Id])
+	assert.NotContains(t, summaries, 99999)
+
+	empty, err := GetBonusBalanceSummaries(nil, now)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+}

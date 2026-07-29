@@ -1185,6 +1185,12 @@ type BonusBalanceSummary struct {
 	NearestExpiresAt int64 `json:"nearest_expires_at"`
 }
 
+type bonusBalanceSummaryRow struct {
+	UserId           int   `gorm:"column:user_id"`
+	ActiveQuota      int64 `gorm:"column:active_quota"`
+	NearestExpiresAt int64 `gorm:"column:nearest_expires_at"`
+}
+
 // migratePaymentCampaignParticipants backfills PaymentCampaignParticipant
 // rows from existing awarded/reserved PaymentCampaignClaim records per
 // campaign. The migration is idempotent: ParticipantMigrationVersion is
@@ -1434,4 +1440,31 @@ func GetBonusBalanceSummary(userId int) (BonusBalanceSummary, error) {
 		}
 	}
 	return summary, nil
+}
+
+// GetBonusBalanceSummaries returns active bonus balances for a page of users
+// with one grouped read. The caller supplies now so all rows in one response
+// use the same expiry boundary.
+func GetBonusBalanceSummaries(userIds []int, now int64) (map[int]BonusBalanceSummary, error) {
+	summaries := make(map[int]BonusBalanceSummary, len(userIds))
+	if len(userIds) == 0 {
+		return summaries, nil
+	}
+
+	rows := make([]bonusBalanceSummaryRow, 0, len(userIds))
+	err := DB.Model(&BonusBalance{}).
+		Select("user_id, SUM(amount_total - amount_used) AS active_quota, MIN(expires_at) AS nearest_expires_at").
+		Where("user_id IN ? AND status = ? AND expires_at > ? AND amount_total > amount_used", userIds, BonusBalanceStatusActive, now).
+		Group("user_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		summaries[row.UserId] = BonusBalanceSummary{
+			ActiveQuota:      row.ActiveQuota,
+			NearestExpiresAt: row.NearestExpiresAt,
+		}
+	}
+	return summaries, nil
 }

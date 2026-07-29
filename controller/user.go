@@ -326,7 +326,38 @@ func Register(c *gin.Context) {
 	return
 }
 
+type adminUserListItem struct {
+	*model.User
+	BonusQuota            int64 `json:"bonus_quota"`
+	BonusNearestExpiresAt int64 `json:"bonus_nearest_expires_at"`
+	TotalQuota            int64 `json:"total_quota"`
+}
+
+func buildAdminUserListItems(users []*model.User, now int64) ([]adminUserListItem, error) {
+	userIds := make([]int, 0, len(users))
+	for _, user := range users {
+		userIds = append(userIds, user.Id)
+	}
+	summaries, err := model.GetBonusBalanceSummaries(userIds, now)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]adminUserListItem, 0, len(users))
+	for _, user := range users {
+		summary := summaries[user.Id]
+		items = append(items, adminUserListItem{
+			User:                  user,
+			BonusQuota:            summary.ActiveQuota,
+			BonusNearestExpiresAt: summary.NearestExpiresAt,
+			TotalQuota:            int64(user.Quota) + summary.ActiveQuota,
+		})
+	}
+	return items, nil
+}
+
 func GetAllUsers(c *gin.Context) {
+	now := common.GetTimestamp()
 	pageInfo := common.GetPageQuery(c)
 	sortOptions := model.NewUserSortOptions(c.Query("sort_by"), c.Query("sort_order"))
 	users, total, err := model.GetAllUsers(pageInfo, sortOptions)
@@ -334,15 +365,21 @@ func GetAllUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	items, err := buildAdminUserListItems(users, now)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(items)
 
 	common.ApiSuccess(c, pageInfo)
 	return
 }
 
 func SearchUsers(c *gin.Context) {
+	now := common.GetTimestamp()
 	keyword := c.Query("keyword")
 	group := c.Query("group")
 	var role *int
@@ -364,9 +401,14 @@ func SearchUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	items, err := buildAdminUserListItems(users, now)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(users)
+	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
 	return
 }

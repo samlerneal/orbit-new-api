@@ -122,6 +122,36 @@ export function useUsersColumns(): ColumnDef<User>[] {
       meta: { mobileTitle: true },
     },
     {
+      accessorKey: 'email',
+      header: t('Email'),
+      cell: ({ row }) => {
+        const email = row.original.email?.trim() ?? ''
+        const label = email || t('No email')
+        return (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <div className='max-w-[220px] min-w-0 cursor-help text-sm' />
+              }
+            >
+              <LongText
+                className={email ? 'max-w-[220px]' : 'text-muted-foreground'}
+              >
+                {label}
+              </LongText>
+            </TooltipTrigger>
+            {email && (
+              <TooltipContent>
+                <p className='text-xs'>{email}</p>
+              </TooltipContent>
+            )}
+          </Tooltip>
+        )
+      },
+      size: 220,
+      meta: { mobileOrder: 15 },
+    },
+    {
       accessorKey: 'status',
       header: t('Status'),
       cell: ({ row }) => {
@@ -166,7 +196,14 @@ export function useUsersColumns(): ColumnDef<User>[] {
       header: t('Quota'),
       cell: ({ row }) => {
         const user = row.original
-        return <UserQuotaCell used={user.used_quota} remaining={user.quota} />
+        return (
+          <UserQuotaCell
+            permanent={user.quota}
+            bonus={user.bonus_quota ?? 0}
+            nearestBonusExpiresAt={user.bonus_nearest_expires_at ?? 0}
+            total={user.total_quota ?? user.quota + (user.bonus_quota ?? 0)}
+          />
+        )
       },
       size: 300,
       minSize: 260,

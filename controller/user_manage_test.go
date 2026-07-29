@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +20,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
+
+type selectCountingLogger struct {
+	selectCount int
+}
+
+func (l *selectCountingLogger) LogMode(gormlogger.LogLevel) gormlogger.Interface {
+	return l
+}
+
+func (l *selectCountingLogger) Info(context.Context, string, ...interface{})  {}
+func (l *selectCountingLogger) Warn(context.Context, string, ...interface{})  {}
+func (l *selectCountingLogger) Error(context.Context, string, ...interface{}) {}
+func (l *selectCountingLogger) Trace(_ context.Context, _ time.Time, fc func() (string, int64), _ error) {
+	sql, _ := fc()
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "SELECT") {
+		l.selectCount++
+	}
+}
 
 func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -34,6 +55,7 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	model.DB, model.LOG_DB = db, db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{}, &model.UserSession{}, &model.Log{}, &model.CasbinRule{}, &model.AuthzRole{},
+		&model.BonusBalance{},
 	))
 
 	t.Cleanup(func() {
@@ -46,6 +68,101 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 	return db
+}
+
+func TestBuildAdminUserListItemsKeepsBonusFieldsOutOfGenericUserJSON(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	now := time.Now().Unix()
+	user := model.User{Username: "admin-list-user", Email: "user@example.com", Quota: 300}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Create(&model.BonusBalance{
+		UserId: user.Id, Status: model.BonusBalanceStatusActive,
+		AmountTotal: 100, AmountUsed: 25, ExpiresAt: now + 3600,
+	}).Error)
+
+	items, err := buildAdminUserListItems([]*model.User{&user}, now)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.EqualValues(t, 75, items[0].BonusQuota)
+	assert.EqualValues(t, now+3600, items[0].BonusNearestExpiresAt)
+	assert.EqualValues(t, 375, items[0].TotalQuota)
+
+	genericJSON, err := json.Marshal(&user)
+	require.NoError(t, err)
+	assert.NotContains(t, string(genericJSON), "bonus_quota")
+	assert.NotContains(t, string(genericJSON), "bonus_nearest_expires_at")
+	assert.NotContains(t, string(genericJSON), "total_quota")
+	adminJSON, err := json.Marshal(items[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(adminJSON), `"bonus_quota":75`)
+	assert.Contains(t, string(adminJSON), `"total_quota":375`)
+}
+
+func TestAdminUserListAndSearchUseOneBonusSelectForAnyPageSize(t *testing.T) {
+	tests := []struct {
+		name   string
+		search bool
+	}{
+		{name: "list", search: false},
+		{name: "search", search: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, pageSize := range []int{1, 2} {
+				t.Run(fmt.Sprintf("page_size_%d", pageSize), func(t *testing.T) {
+					db := setupManageUserTestDB(t)
+					counter := &selectCountingLogger{}
+					model.DB = db.Session(&gorm.Session{Logger: counter})
+					now := time.Now().Unix()
+					users := []model.User{
+						{Username: "query-user-one", AffCode: "query-user-one", Quota: 300},
+						{Username: "query-user-two", AffCode: "query-user-two", Quota: 400},
+					}
+					for i := range users {
+						require.NoError(t, db.Create(&users[i]).Error)
+					}
+					require.NoError(t, db.Create(&model.BonusBalance{
+						UserId: users[0].Id, CampaignId: "query-valid", TopUpId: 1,
+						Status: model.BonusBalanceStatusActive, AmountTotal: 100,
+						AmountUsed: 25, ExpiresAt: now + 3600,
+					}).Error)
+					require.NoError(t, db.Create(&model.BonusBalance{
+						UserId: users[0].Id, CampaignId: "query-expired", TopUpId: 2,
+						Status: model.BonusBalanceStatusActive, AmountTotal: 999,
+						ExpiresAt: now - 1,
+					}).Error)
+
+					gin.SetMode(gin.TestMode)
+					recorder := httptest.NewRecorder()
+					context, _ := gin.CreateTestContext(recorder)
+					path := fmt.Sprintf("/api/user/?p=1&page_size=%d", pageSize)
+					if test.search {
+						path = fmt.Sprintf("/api/user/search?keyword=query-user&p=1&page_size=%d", pageSize)
+					}
+					context.Request = httptest.NewRequest(http.MethodGet, path, nil)
+					if test.search {
+						SearchUsers(context)
+					} else {
+						GetAllUsers(context)
+					}
+
+					assert.Equal(t, http.StatusOK, recorder.Code)
+					responseBody := recorder.Body.String()
+					assert.Contains(t, responseBody, `"bonus_nearest_expires_at":`)
+					if pageSize == 1 {
+						assert.Contains(t, responseBody, `"bonus_quota":0`)
+						assert.Contains(t, responseBody, `"bonus_nearest_expires_at":0`)
+						assert.Contains(t, responseBody, `"total_quota":400`)
+					} else {
+						assert.Contains(t, responseBody, `"bonus_quota":75`)
+						assert.Contains(t, responseBody, fmt.Sprintf(`"bonus_nearest_expires_at":%d`, now+3600))
+						assert.Contains(t, responseBody, `"total_quota":375`)
+					}
+					assert.Equal(t, 3, counter.selectCount, "count, page, and one grouped bonus query expected")
+				})
+			}
+		})
+	}
 }
 
 func performManageUserRequest(t *testing.T, body string) *httptest.ResponseRecorder {
