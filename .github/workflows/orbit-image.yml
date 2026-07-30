@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - codex/wallet-redesign
+      - codex/o019-brand-domain
   workflow_dispatch:
 
 concurrency:
@@ -87,15 +88,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set image tags
+        id: image_tags
+        run: |
+          {
+            echo 'tags<<EOF'
+            echo "${IMAGE_NAME}:${GITHUB_SHA}"
+            if [ "${GITHUB_REF}" != "refs/heads/codex/o019-brand-domain" ]; then
+              echo "${IMAGE_NAME}:wallet-candidate"
+            fi
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and publish image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           platforms: linux/amd64
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.IMAGE_NAME }}:wallet-candidate
+          tags: ${{ steps.image_tags.outputs.tags }}
           cache-from: type=gha,scope=orbit-amd64
           cache-to: type=gha,mode=max,scope=orbit-amd64
           provenance: mode=max
