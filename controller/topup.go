@@ -202,6 +202,10 @@ func GetEpayClient() *epay.Client {
 	return withUrl
 }
 
+func buildEpayProductName(packageName string) string {
+	return common.PublicBrandZhCN + " " + packageName
+}
+
 func getPayMoney(amount int64, group string) float64 {
 	dAmount := decimal.NewFromInt(amount)
 	// 充值金额以“展示类型”为准：
@@ -303,7 +307,7 @@ func RequestEpay(c *gin.Context) {
 	uri, params, err := client.Purchase(&epay.PurchaseArgs{
 		Type:           req.PaymentMethod,
 		ServiceTradeNo: tradeNo,
-		Name:           "Orbit " + packageOption.Name,
+		Name:           buildEpayProductName(packageOption.Name),
 		Money:          payMoney.StringFixed(2),
 		Device:         epay.PC,
 		NotifyUrl:      notifyUrl,

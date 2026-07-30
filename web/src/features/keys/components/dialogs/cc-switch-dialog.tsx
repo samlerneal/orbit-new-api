@@ -27,11 +27,13 @@ import { ComboboxInput } from '@/components/ui/combobox-input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { getUserModels } from '@/lib/api'
+import { CC_SWITCH_DEFAULT_PROVIDER_BY_APP } from '@/lib/public-brand'
+import { getPublicServerAddress } from '@/lib/public-server-address'
 
 const APP_CONFIGS = {
   claude: {
     label: 'Claude',
-    defaultName: 'My Claude',
+    defaultName: CC_SWITCH_DEFAULT_PROVIDER_BY_APP.claude,
     modelFields: [
       { key: 'model', labelKey: 'Primary Model', required: true },
       { key: 'haikuModel', labelKey: 'Haiku Model', required: false },
@@ -41,30 +43,17 @@ const APP_CONFIGS = {
   },
   codex: {
     label: 'Codex',
-    defaultName: 'My Codex',
+    defaultName: CC_SWITCH_DEFAULT_PROVIDER_BY_APP.codex,
     modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
   },
   gemini: {
     label: 'Gemini',
-    defaultName: 'My Gemini',
+    defaultName: CC_SWITCH_DEFAULT_PROVIDER_BY_APP.gemini,
     modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
   },
 } as const
 
 type AppType = keyof typeof APP_CONFIGS
-
-function getServerAddress(): string {
-  try {
-    const raw = localStorage.getItem('status')
-    if (raw) {
-      const status = JSON.parse(raw)
-      if (status.server_address) return status.server_address
-    }
-  } catch {
-    /* empty */
-  }
-  return window.location.origin
-}
 
 function buildCCSwitchURL(
   app: string,
@@ -72,7 +61,7 @@ function buildCCSwitchURL(
   models: Record<string, string>,
   apiKey: string
 ): string {
-  const serverAddress = getServerAddress()
+  const serverAddress = getPublicServerAddress()
   const endpoint = app === 'codex' ? serverAddress + '/v1' : serverAddress
   const params = new URLSearchParams()
   params.set('resource', 'provider')

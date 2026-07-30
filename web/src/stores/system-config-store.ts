@@ -40,6 +40,7 @@ export interface CurrencyConfig {
 
 export interface SystemConfig {
   systemName: string
+  publicBrandZhCN?: string | null
   logo: string
   footerHtml?: string
   demoSiteEnabled?: boolean

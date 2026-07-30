@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strconv"
 	"strings"
@@ -290,6 +291,35 @@ func TestSendEmailUsesExplicitStartTLSWithInsecureCertificate(t *testing.T) {
 	case message := <-server.messages:
 		require.Contains(t, message, "Subject: =?UTF-8?B?")
 		require.Contains(t, message, "<p>123456</p>")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SMTP DATA")
+	}
+}
+
+func TestSendEmailUsesEncodedChinesePublicBrandInFromHeader(t *testing.T) {
+	server := newFakeSMTPServerWithSTARTTLSAdvertisement(t, false)
+	defer server.close()
+	withSMTPSettings(t)
+
+	SMTPServer = server.host
+	SMTPPort = server.port
+	SMTPSSLEnabled = false
+	SMTPStartTLSEnabled = false
+	SMTPInsecureSkipVerify = false
+	SMTPAccount = "sender@example.com"
+	SMTPFrom = "sender@example.com"
+	SMTPToken = ""
+
+	require.NoError(t, SendEmail("Verification", "receiver@example.com", "<p>123456</p>"))
+
+	select {
+	case messageData := <-server.messages:
+		message, err := mail.ReadMessage(strings.NewReader(messageData))
+		require.NoError(t, err)
+		from, err := mail.ParseAddress(message.Header.Get("From"))
+		require.NoError(t, err)
+		require.Equal(t, PublicBrandZhCN, from.Name)
+		require.Equal(t, SMTPFrom, from.Address)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for SMTP DATA")
 	}

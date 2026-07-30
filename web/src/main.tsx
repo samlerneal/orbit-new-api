@@ -30,10 +30,12 @@ import { toast } from 'sonner'
 
 import { getStatus } from '@/lib/api'
 import { installBuildMetadata } from '@/lib/build-metadata'
+import { DEFAULT_SYSTEM_NAME } from '@/lib/constants'
 import { applyFaviconToDom } from '@/lib/dom-utils'
-import '@/lib/dayjs'
 import { initializeFrontendCache } from '@/lib/frontend-cache'
+import '@/lib/dayjs'
 import { handleServerError } from '@/lib/handle-server-error'
+import { getPublicBrandName } from '@/lib/public-brand'
 
 import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
@@ -117,7 +119,18 @@ if (!rootElement) {
 ;(function initSystemBranding() {
   try {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
-    const apply = (name: string) => {
+    let status: Record<string, unknown> | undefined
+    const apply = () => {
+      const name = getPublicBrandName({
+        locale: i18next.language,
+        publicBrandZhCN:
+          typeof status?.public_brand_zh_cn === 'string'
+            ? status.public_brand_zh_cn
+            : null,
+        systemName:
+          typeof status?.system_name === 'string' ? status.system_name : null,
+        defaultSystemName: DEFAULT_SYSTEM_NAME,
+      })
       document.title = name
       const metaTitle = document.querySelector(
         'meta[name="title"]'
@@ -128,9 +141,9 @@ if (!rootElement) {
     try {
       const saved = localStorage.getItem('status')
       if (saved) {
-        const s = JSON.parse(saved)
-        if (s?.system_name) apply(s.system_name)
-        if (s?.logo) applyFaviconToDom(s.logo)
+        status = JSON.parse(saved) as Record<string, unknown>
+        apply()
+        if (typeof status.logo === 'string') applyFaviconToDom(status.logo)
       }
     } catch {
       /* empty */
@@ -138,8 +151,9 @@ if (!rootElement) {
     // Background refresh
     getStatus()
       .then((s) => {
-        if (s?.system_name) {
-          apply(s.system_name as string)
+        if (s) {
+          status = s
+          apply()
           try {
             localStorage.setItem('status', JSON.stringify(s))
           } catch {
@@ -151,6 +165,7 @@ if (!rootElement) {
       .catch(() => {
         /* empty */
       })
+    i18next.on('languageChanged', apply)
   } catch {
     /* empty */
   }

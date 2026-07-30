@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { DEFAULT_SYSTEM_NAME, DEFAULT_LOGO } from '@/lib/constants'
 import { applyFaviconToDom } from '@/lib/dom-utils'
+import { getPublicBrandName } from '@/lib/public-brand'
 import {
   useSystemConfigStore,
   type CurrencyConfig,
@@ -33,10 +35,11 @@ interface UseSystemConfigOptions {
   autoLoad?: boolean
 }
 
-interface StatusApiResponse {
+export interface StatusApiResponse {
   success: boolean
   data: {
     system_name?: string
+    public_brand_zh_cn?: string | null
     logo?: string
     footer_html?: string
     demo_site_enabled?: boolean
@@ -94,6 +97,7 @@ export function mapStatusDataToConfig(
 
   return {
     systemName: data.system_name || DEFAULT_SYSTEM_NAME,
+    publicBrandZhCN: data.public_brand_zh_cn,
     logo: data.logo || DEFAULT_LOGO,
     footerHtml: data.footer_html,
     demoSiteEnabled: data.demo_site_enabled,
@@ -142,6 +146,7 @@ function preloadImage(
  * const { systemName, logo, loading } = useSystemConfig()
  */
 export function useSystemConfig(options: UseSystemConfigOptions = {}) {
+  const { i18n } = useTranslation()
   const { autoLoad = false } = options
   const {
     config,
@@ -196,8 +201,18 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.logo, loadedLogoUrl, setLoadedLogoUrl])
 
+  const publicSystemName = getPublicBrandName({
+    locale: i18n.language,
+    publicBrandZhCN: config.publicBrandZhCN,
+    systemName: config.systemName,
+    defaultSystemName: DEFAULT_SYSTEM_NAME,
+  })
+
   return {
     ...config,
+    systemName: publicSystemName,
+    canonicalSystemName: config.systemName,
+    publicBrandName: publicSystemName,
     loading,
     logoLoaded: config.logo === loadedLogoUrl && !!loadedLogoUrl,
   }
