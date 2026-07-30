@@ -37,6 +37,11 @@ export type UpdateOptionRequest = {
 export type UpdateOptionResponse = {
   success: boolean
   message: string
+  field_errors?: Record<string, string>
+  data?: {
+    saved_at?: number
+    campaigns?: unknown[]
+  }
 }
 
 export type ConfirmPaymentComplianceResponse = {

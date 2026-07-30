@@ -30,7 +30,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { api } from '@/lib/api'
 
-type TopupPackageRule = {
+export type TopupPackageRule = {
   id: string
   name: string
   description: string
@@ -50,7 +50,7 @@ type SupportContactRule = {
   value: string
 }
 
-type CampaignRule = {
+export type CampaignRule = {
   id: string
   name: string
   banner_title: string
@@ -73,9 +73,10 @@ type CampaignRule = {
   valid_days: number
   stackable: boolean
   priority: number
+  legacy_migration_version?: number
 }
 
-type CampaignStats = {
+export type CampaignStats = {
   campaign_id: string
   limited: boolean
   total: number
@@ -98,7 +99,8 @@ type CampaignStatsResponse = {
 }
 
 const DEFAULT_MAX_CLAIMS_PER_EMAIL = 1
-const DEFAULT_MAX_CLAIMS_TOTAL = 100
+const DEFAULT_MAX_CLAIMS_TOTAL = 0
+const DEFAULT_MAX_PARTICIPANTS_TOTAL = 30
 const DEFAULT_RESERVATION_MINUTES = 3
 const SELLING_POINT_SLOT_KEYS = ['first', 'second', 'third'] as const
 
@@ -111,15 +113,90 @@ function parseArray<T>(value: string): T[] {
   }
 }
 
-function normalizeCampaign(campaign: CampaignRule): CampaignRule {
-  return {
+function getApplicablePackageCount(
+  campaign: CampaignRule,
+  packages: TopupPackageRule[]
+) {
+  const enabledPackageIds = new Set(
+    packages.filter((item) => item.enabled).map((item) => item.id)
+  )
+  if (campaign.package_ids.length === 0) return enabledPackageIds.size
+  return new Set(
+    campaign.package_ids.filter((packageId) => enabledPackageIds.has(packageId))
+  ).size
+}
+
+function deriveCampaignClaimLimit(
+  campaign: CampaignRule,
+  packages: TopupPackageRule[]
+) {
+  if (campaign.max_participants_total <= 0) return 0
+  const claimsPerParticipant = Math.max(campaign.max_claims_per_user, 1)
+  const packageCount =
+    campaign.eligibility === 'per_package'
+      ? getApplicablePackageCount(campaign, packages)
+      : 1
+  return campaign.max_participants_total * claimsPerParticipant * packageCount
+}
+
+function claimLimitForEligibility(
+  eligibility: CampaignRule['eligibility'],
+  current: number
+) {
+  if (eligibility === 'unlimited') return 0
+  if (eligibility === 'per_package') return 1
+  return Math.max(current, 1)
+}
+
+// eslint-disable-next-line react/only-export-components
+export function normalizeCampaign(
+  campaign: CampaignRule,
+  packages: TopupPackageRule[]
+): CampaignRule {
+  const legacyLaunchCampaign =
+    campaign.id === 'launch-first-topup-30' &&
+    (campaign.legacy_migration_version ?? 0) < 1 &&
+    (campaign.eligibility === 'per_campaign' || !campaign.eligibility) &&
+    campaign.max_claims_total > 0
+  const normalized = {
     ...campaign,
+    eligibility: legacyLaunchCampaign ? 'per_package' : campaign.eligibility,
     max_claims_per_email:
       campaign.max_claims_per_email ?? DEFAULT_MAX_CLAIMS_PER_EMAIL,
     max_claims_total: campaign.max_claims_total ?? DEFAULT_MAX_CLAIMS_TOTAL,
-    max_participants_total: campaign.max_participants_total ?? 0,
+    max_participants_total: legacyLaunchCampaign
+      ? campaign.max_participants_total || campaign.max_claims_total
+      : (campaign.max_participants_total ?? 0),
     reservation_minutes:
       campaign.reservation_minutes ?? DEFAULT_RESERVATION_MINUTES,
+  } satisfies CampaignRule
+  return {
+    ...normalized,
+    max_claims_total: deriveCampaignClaimLimit(normalized, packages),
+    max_claims_per_user:
+      normalized.eligibility === 'per_package'
+        ? 1
+        : normalized.max_claims_per_user,
+    max_claims_per_email:
+      normalized.eligibility === 'per_package'
+        ? 1
+        : normalized.max_claims_per_email,
+  }
+}
+
+// eslint-disable-next-line react/only-export-components
+export function mergeCampaignPatchForEdit(
+  campaign: CampaignRule,
+  patch: Partial<CampaignRule>
+): CampaignRule {
+  const intentionalLegacyChoice =
+    campaign.id === 'launch-first-topup-30' &&
+    (campaign.legacy_migration_version ?? 0) < 1 &&
+    patch.eligibility === 'per_campaign'
+  return {
+    ...campaign,
+    ...patch,
+    ...(intentionalLegacyChoice ? { legacy_migration_version: 1 } : {}),
   }
 }
 
@@ -162,6 +239,9 @@ type TopupRulesEditorProps = {
   onPackagesChange: (value: string) => void
   onCampaignsChange: (value: string) => void
   onSupportContactsChange: (value: string) => void
+  campaignsOnly?: boolean
+  hideCampaigns?: boolean
+  campaignFieldErrors?: Record<string, string>
 }
 
 export function TopupRulesEditor({
@@ -171,6 +251,9 @@ export function TopupRulesEditor({
   onPackagesChange,
   onCampaignsChange,
   onSupportContactsChange,
+  campaignsOnly = false,
+  hideCampaigns = false,
+  campaignFieldErrors = {},
 }: TopupRulesEditorProps) {
   const { t } = useTranslation()
   const packages = useMemo(
@@ -196,15 +279,19 @@ export function TopupRulesEditor({
   const campaigns = useMemo(
     () =>
       parseArray<CampaignRule>(campaignsValue)
-        .map(normalizeCampaign)
+        .map((campaign) => normalizeCampaign(campaign, packages))
         .map(normalizeLegacyCampaignText),
-    [campaignsValue]
+    [campaignsValue, packages]
   )
   const supportContacts = useMemo(
     () => parseArray<SupportContactRule>(supportContactsValue),
     [supportContactsValue]
   )
-  const { data: campaignStats = [] } = useQuery({
+  const {
+    data: campaignStats = [],
+    isError: campaignStatsFailed,
+    isFetching: campaignStatsRefreshing,
+  } = useQuery({
     queryKey: ['payment-campaign-stats'],
     queryFn: async () => {
       const response = await api.get<CampaignStatsResponse>(
@@ -218,6 +305,7 @@ export function TopupRulesEditor({
       return response.data.data ?? []
     },
     retry: false,
+    enabled: !hideCampaigns,
   })
   const campaignStatsById = useMemo(
     () => new Map(campaignStats.map((stats) => [stats.campaign_id, stats])),
@@ -232,9 +320,12 @@ export function TopupRulesEditor({
   }
 
   const updateCampaign = (index: number, patch: Partial<CampaignRule>) => {
-    const next = campaigns.map((item, itemIndex) =>
-      itemIndex === index ? { ...item, ...patch } : item
-    )
+    const next = campaigns
+      .map((item, itemIndex) => {
+        if (itemIndex !== index) return item
+        return mergeCampaignPatchForEdit(item, patch)
+      })
+      .map((campaign) => normalizeCampaign(campaign, packages))
     onCampaignsChange(JSON.stringify(next, null, 2))
   }
 
@@ -276,11 +367,13 @@ export function TopupRulesEditor({
         starts_at: 0,
         ends_at: 0,
         package_ids: packages.map((item) => item.id),
-        eligibility: 'per_campaign',
+        eligibility: 'per_package',
         max_claims_per_user: 1,
         max_claims_per_email: DEFAULT_MAX_CLAIMS_PER_EMAIL,
-        max_claims_total: DEFAULT_MAX_CLAIMS_TOTAL,
-        max_participants_total: 0,
+        max_claims_total:
+          DEFAULT_MAX_PARTICIPANTS_TOTAL *
+          packages.filter((item) => item.enabled).length,
+        max_participants_total: DEFAULT_MAX_PARTICIPANTS_TOTAL,
         reservation_minutes: DEFAULT_RESERVATION_MINUTES,
         reward_mode: 'target_total_percent',
         reward_percent: 10,
@@ -293,6 +386,9 @@ export function TopupRulesEditor({
     ]
     onCampaignsChange(JSON.stringify(next, null, 2))
   }
+
+  const getCampaignFieldError = (index: number, field: string) =>
+    campaignFieldErrors[`campaigns.${index}.${field}`]
 
   const addPackage = () => {
     const id = `package-${Date.now()}`
@@ -318,125 +414,366 @@ export function TopupRulesEditor({
 
   return (
     <div className='space-y-6'>
-      <div className='space-y-3'>
-        <div className='flex items-start justify-between gap-3'>
-          <div>
-            <h4 className='font-medium'>{t('Customer service contacts')}</h4>
-            <p className='text-muted-foreground text-sm'>
-              {t(
-                'Shown in the refund notice. Leaving the list empty does not disable payment.'
-              )}
-            </p>
-          </div>
-          <Button
-            type='button'
-            variant='outline'
-            disabled={supportContacts.length >= 8}
-            onClick={addSupportContact}
-          >
-            <Plus className='size-4' />
-            {t('Add contact')}
-          </Button>
-        </div>
-        {supportContacts.length === 0 && (
-          <div className='text-muted-foreground rounded-lg border border-dashed p-6 text-center text-sm'>
-            {t('No customer service contact configured.')}
-          </div>
-        )}
-        <div className='space-y-2'>
-          {supportContacts.map((contact, index) => (
-            <div
-              key={contact.id}
-              className='grid gap-2 rounded-lg border p-3 sm:grid-cols-[160px_1fr_auto]'
-            >
-              <select
-                aria-label={t('Contact type')}
-                className='border-input bg-background h-9 w-full rounded-md border px-3 text-sm'
-                value={contact.type}
-                onChange={(event) =>
-                  updateSupportContact(index, {
-                    type: event.target.value as SupportContactRule['type'],
-                  })
-                }
-              >
-                <option value='qq'>{t('QQ')}</option>
-                <option value='wechat'>{t('WeChat')}</option>
-                <option value='phone'>{t('Phone number')}</option>
-                <option value='qrcode'>{t('QR code image')}</option>
-              </select>
-              <Input
-                value={contact.value}
-                placeholder={
-                  contact.type === 'qrcode'
-                    ? t('HTTPS image URL')
-                    : t('Contact account or number')
-                }
-                onChange={(event) =>
-                  updateSupportContact(index, { value: event.target.value })
-                }
-              />
+      {!campaignsOnly && (
+        <>
+          <div className='space-y-3'>
+            <div className='flex items-start justify-between gap-3'>
+              <div>
+                <h4 className='font-medium'>
+                  {t('Customer service contacts')}
+                </h4>
+                <p className='text-muted-foreground text-sm'>
+                  {t(
+                    'Shown in the refund notice. Leaving the list empty does not disable payment.'
+                  )}
+                </p>
+              </div>
               <Button
                 type='button'
-                size='icon'
-                variant='ghost'
-                aria-label={t('Delete contact')}
-                onClick={() =>
-                  onSupportContactsChange(
-                    JSON.stringify(
-                      supportContacts.filter(
-                        (_item, itemIndex) => itemIndex !== index
-                      ),
-                      null,
-                      2
-                    )
-                  )
-                }
+                variant='outline'
+                disabled={supportContacts.length >= 8}
+                onClick={addSupportContact}
               >
-                <Trash2 className='size-4' />
+                <Plus className='size-4' />
+                {t('Add contact')}
               </Button>
             </div>
-          ))}
-        </div>
-      </div>
-
-      <div className='space-y-3'>
-        <div className='flex items-start justify-between gap-3'>
-          <div>
-            <h4 className='font-medium'>{t('Top-up packages')}</h4>
-            <p className='text-muted-foreground text-sm'>
-              {t(
-                'Edit the text, price and permanent balance for each package.'
-              )}
-            </p>
+            {supportContacts.length === 0 && (
+              <div className='text-muted-foreground rounded-lg border border-dashed p-6 text-center text-sm'>
+                {t('No customer service contact configured.')}
+              </div>
+            )}
+            <div className='space-y-2'>
+              {supportContacts.map((contact, index) => (
+                <div
+                  key={contact.id}
+                  className='grid gap-2 rounded-lg border p-3 sm:grid-cols-[160px_1fr_auto]'
+                >
+                  <select
+                    aria-label={t('Contact type')}
+                    className='border-input bg-background h-9 w-full rounded-md border px-3 text-sm'
+                    value={contact.type}
+                    onChange={(event) =>
+                      updateSupportContact(index, {
+                        type: event.target.value as SupportContactRule['type'],
+                      })
+                    }
+                  >
+                    <option value='qq'>{t('QQ')}</option>
+                    <option value='wechat'>{t('WeChat')}</option>
+                    <option value='phone'>{t('Phone number')}</option>
+                    <option value='qrcode'>{t('QR code image')}</option>
+                  </select>
+                  <Input
+                    value={contact.value}
+                    placeholder={
+                      contact.type === 'qrcode'
+                        ? t('HTTPS image URL')
+                        : t('Contact account or number')
+                    }
+                    onChange={(event) =>
+                      updateSupportContact(index, { value: event.target.value })
+                    }
+                  />
+                  <Button
+                    type='button'
+                    size='icon'
+                    variant='ghost'
+                    aria-label={t('Delete contact')}
+                    onClick={() =>
+                      onSupportContactsChange(
+                        JSON.stringify(
+                          supportContacts.filter(
+                            (_item, itemIndex) => itemIndex !== index
+                          ),
+                          null,
+                          2
+                        )
+                      )
+                    }
+                  >
+                    <Trash2 className='size-4' />
+                  </Button>
+                </div>
+              ))}
+            </div>
           </div>
-          <Button type='button' variant='outline' onClick={addPackage}>
-            <Plus className='size-4' />
-            {t('Add package')}
-          </Button>
-        </div>
-        <div className='grid gap-3 lg:grid-cols-2'>
-          {packages.map((item, index) => (
-            <Card key={item.id} data-card-hover='false'>
+
+          <div className='space-y-3'>
+            <div className='flex items-start justify-between gap-3'>
+              <div>
+                <h4 className='font-medium'>{t('Top-up packages')}</h4>
+                <p className='text-muted-foreground text-sm'>
+                  {t(
+                    'Edit the text, price and permanent balance for each package.'
+                  )}
+                </p>
+              </div>
+              <Button type='button' variant='outline' onClick={addPackage}>
+                <Plus className='size-4' />
+                {t('Add package')}
+              </Button>
+            </div>
+            <div className='grid gap-3 lg:grid-cols-2'>
+              {packages.map((item, index) => (
+                <Card key={item.id} data-card-hover='false'>
+                  <CardHeader className='pb-3'>
+                    <div className='flex items-center justify-between gap-3'>
+                      <CardTitle className='text-base'>{item.name}</CardTitle>
+                      <div className='flex items-center gap-2'>
+                        <Switch
+                          checked={item.enabled}
+                          onCheckedChange={(enabled) =>
+                            updatePackage(index, { enabled })
+                          }
+                        />
+                        <Button
+                          type='button'
+                          size='icon'
+                          variant='ghost'
+                          disabled={packages.length <= 1}
+                          aria-label={t('Delete package')}
+                          onClick={() =>
+                            onPackagesChange(
+                              JSON.stringify(
+                                packages.filter(
+                                  (_item, itemIndex) => itemIndex !== index
+                                ),
+                                null,
+                                2
+                              )
+                            )
+                          }
+                        >
+                          <Trash2 className='size-4' />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className='grid gap-3 sm:grid-cols-2'>
+                    <Field label={t('Name')}>
+                      <Input
+                        value={item.name}
+                        onChange={(event) =>
+                          updatePackage(index, { name: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label={t('Tag')}>
+                      <Input
+                        value={item.tag ?? ''}
+                        placeholder={t('Optional')}
+                        onChange={(event) =>
+                          updatePackage(index, { tag: event.target.value })
+                        }
+                      />
+                    </Field>
+                    <Field label={t('Description')} className='sm:col-span-2'>
+                      <Input
+                        value={item.description}
+                        onChange={(event) =>
+                          updatePackage(index, {
+                            description: event.target.value,
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label={t('Payment amount (RMB)')}>
+                      <Input
+                        type='number'
+                        min={0.01}
+                        step={0.01}
+                        value={item.pay_amount}
+                        onChange={(event) =>
+                          updatePackage(index, {
+                            pay_amount: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label={t('Permanent balance received (RMB)')}>
+                      <Input
+                        type='number'
+                        min={0.01}
+                        step={0.01}
+                        value={item.credit_amount}
+                        onChange={(event) =>
+                          updatePackage(index, {
+                            credit_amount: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label={t('Sort order')}>
+                      <Input
+                        type='number'
+                        min={0}
+                        step={10}
+                        value={item.sort_order}
+                        onChange={(event) =>
+                          updatePackage(index, {
+                            sort_order: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label={t('Visual style')} className='sm:col-span-2'>
+                      <select
+                        className='border-input bg-background h-9 w-full rounded-md border px-3 text-sm'
+                        value={item.visual_style || 'default'}
+                        onChange={(event) =>
+                          updatePackage(index, {
+                            visual_style: event.target.value,
+                          })
+                        }
+                      >
+                        <option value='default'>{t('Default')}</option>
+                        <option value='recommended'>{t('Recommended')}</option>
+                        <option value='popular'>{t('Popular')}</option>
+                        <option value='value'>{t('Value')}</option>
+                      </select>
+                    </Field>
+                    {item.selling_points.map((point, pointIndex) => (
+                      <Field
+                        key={`${item.id}-selling-point-${SELLING_POINT_SLOT_KEYS[pointIndex]}`}
+                        label={`${t('Selling point')} ${pointIndex + 1}`}
+                        className='sm:col-span-2'
+                      >
+                        <div className='flex gap-2'>
+                          <Input
+                            value={point}
+                            maxLength={80}
+                            onChange={(event) =>
+                              updatePackage(index, {
+                                selling_points: item.selling_points.map(
+                                  (p, i) =>
+                                    i === pointIndex ? event.target.value : p
+                                ),
+                              })
+                            }
+                          />
+                          <Button
+                            type='button'
+                            size='icon'
+                            variant='ghost'
+                            aria-label={t('Delete selling point')}
+                            onClick={() =>
+                              updatePackage(index, {
+                                selling_points: item.selling_points.filter(
+                                  (_p, i) => i !== pointIndex
+                                ),
+                              })
+                            }
+                          >
+                            <Trash2 className='size-4' />
+                          </Button>
+                        </div>
+                      </Field>
+                    ))}
+                    {item.selling_points.length < 3 && (
+                      <div className='sm:col-span-2'>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          onClick={() =>
+                            updatePackage(index, {
+                              selling_points: [...item.selling_points, ''],
+                            })
+                          }
+                        >
+                          <Plus className='size-4' />
+                          {t('Add selling point')}
+                        </Button>
+                      </div>
+                    )}
+                    <Field label={t('Footer note')} className='sm:col-span-2'>
+                      <Input
+                        value={item.footer_note ?? ''}
+                        maxLength={120}
+                        placeholder={t('Optional footer text')}
+                        onChange={(event) =>
+                          updatePackage(index, {
+                            footer_note: event.target.value,
+                          })
+                        }
+                      />
+                    </Field>
+                    <div className='text-muted-foreground text-xs sm:col-span-2'>
+                      {t(
+                        'Campaign bonus and expiry is managed in campaign settings'
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {!hideCampaigns && (
+        <div className='space-y-3'>
+          <div className='flex items-start justify-between gap-3'>
+            <div>
+              <h4 className='font-medium'>{t('Top-up campaigns')}</h4>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'Campaigns are data-only rules. Turn them on only after checking the preview.'
+                )}
+              </p>
+            </div>
+            <Button type='button' variant='outline' onClick={addCampaign}>
+              <Plus className='size-4' />
+              {t('Add campaign')}
+            </Button>
+          </div>
+
+          {campaigns.length === 0 && (
+            <div className='text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm'>
+              {t('No top-up campaign configured.')}
+            </div>
+          )}
+
+          {campaignStatsFailed && (
+            <div className='border-destructive/40 bg-destructive/5 text-destructive rounded-md border p-3 text-sm'>
+              {t(
+                'Real-time campaign statistics could not be loaded. Draft editing remains available.'
+              )}
+            </div>
+          )}
+          {campaignStatsRefreshing && (
+            <div className='text-muted-foreground text-xs'>
+              {t('Refreshing real-time campaign statistics...')}
+            </div>
+          )}
+
+          {campaigns.map((campaign, index) => (
+            <Card key={campaign.id} data-card-hover='false'>
               <CardHeader className='pb-3'>
-                <div className='flex items-center justify-between gap-3'>
-                  <CardTitle className='text-base'>{item.name}</CardTitle>
+                <div className='flex flex-wrap items-center justify-between gap-3'>
+                  <div className='flex items-center gap-2'>
+                    <CardTitle className='text-base'>{campaign.name}</CardTitle>
+                    <Badge variant={campaign.enabled ? 'default' : 'secondary'}>
+                      {campaign.enabled ? t('Enabled') : t('Disabled')}
+                    </Badge>
+                  </div>
                   <div className='flex items-center gap-2'>
                     <Switch
-                      checked={item.enabled}
+                      checked={campaign.enabled}
                       onCheckedChange={(enabled) =>
-                        updatePackage(index, { enabled })
+                        updateCampaign(index, { enabled })
                       }
                     />
                     <Button
                       type='button'
                       size='icon'
                       variant='ghost'
-                      disabled={packages.length <= 1}
-                      aria-label={t('Delete package')}
+                      aria-label={t('Delete campaign')}
                       onClick={() =>
-                        onPackagesChange(
+                        onCampaignsChange(
                           JSON.stringify(
-                            packages.filter(
+                            campaigns.filter(
                               (_item, itemIndex) => itemIndex !== index
                             ),
                             null,
@@ -450,504 +787,385 @@ export function TopupRulesEditor({
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className='grid gap-3 sm:grid-cols-2'>
-                <Field label={t('Name')}>
+              <CardContent className='grid gap-4 md:grid-cols-2'>
+                <Field
+                  label={t('Campaign ID')}
+                  error={getCampaignFieldError(index, 'id')}
+                >
                   <Input
-                    value={item.name}
+                    value={campaign.id}
                     onChange={(event) =>
-                      updatePackage(index, { name: event.target.value })
+                      updateCampaign(index, { id: event.target.value })
                     }
                   />
                 </Field>
-                <Field label={t('Tag')}>
+                <Field
+                  label={t('Internal campaign name')}
+                  error={getCampaignFieldError(index, 'name')}
+                >
                   <Input
-                    value={item.tag ?? ''}
-                    placeholder={t('Optional')}
+                    value={campaign.name}
                     onChange={(event) =>
-                      updatePackage(index, { tag: event.target.value })
+                      updateCampaign(index, { name: event.target.value })
                     }
                   />
                 </Field>
-                <Field label={t('Description')} className='sm:col-span-2'>
+                <Field
+                  label={t('Package badge')}
+                  error={getCampaignFieldError(index, 'badge_text')}
+                >
                   <Input
-                    value={item.description}
+                    value={campaign.badge_text}
                     onChange={(event) =>
-                      updatePackage(index, {
-                        description: event.target.value,
+                      updateCampaign(index, { badge_text: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field
+                  label={t('Banner title')}
+                  error={getCampaignFieldError(index, 'banner_title')}
+                >
+                  <Input
+                    value={campaign.banner_title}
+                    onChange={(event) =>
+                      updateCampaign(index, {
+                        banner_title: event.target.value,
                       })
                     }
                   />
                 </Field>
-                <Field label={t('Payment amount (RMB)')}>
+                <Field
+                  label={t('Banner description')}
+                  error={getCampaignFieldError(index, 'banner_text')}
+                >
                   <Input
-                    type='number'
-                    min={0.01}
-                    step={0.01}
-                    value={item.pay_amount}
+                    value={campaign.banner_text}
                     onChange={(event) =>
-                      updatePackage(index, {
-                        pay_amount: Number(event.target.value),
+                      updateCampaign(index, { banner_text: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field
+                  label={t('Start time')}
+                  error={getCampaignFieldError(index, 'starts_at')}
+                >
+                  <Input
+                    type='datetime-local'
+                    value={toDateTimeLocal(campaign.starts_at)}
+                    onChange={(event) =>
+                      updateCampaign(index, {
+                        starts_at: fromDateTimeLocal(event.target.value),
                       })
                     }
                   />
                 </Field>
-                <Field label={t('Permanent balance received (RMB)')}>
+                <Field
+                  label={t('End time')}
+                  error={getCampaignFieldError(index, 'ends_at')}
+                >
                   <Input
-                    type='number'
-                    min={0.01}
-                    step={0.01}
-                    value={item.credit_amount}
+                    type='datetime-local'
+                    value={toDateTimeLocal(campaign.ends_at)}
                     onChange={(event) =>
-                      updatePackage(index, {
-                        credit_amount: Number(event.target.value),
+                      updateCampaign(index, {
+                        ends_at: fromDateTimeLocal(event.target.value),
                       })
                     }
                   />
                 </Field>
-                <Field label={t('Sort order')}>
+                <Field
+                  label={t('Eligibility')}
+                  error={getCampaignFieldError(index, 'eligibility')}
+                >
+                  <select
+                    className='border-input bg-background h-9 w-full rounded-md border px-3 text-sm'
+                    value={campaign.eligibility}
+                    onChange={(event) =>
+                      updateCampaign(index, {
+                        eligibility: event.target
+                          .value as CampaignRule['eligibility'],
+                        max_claims_per_user: claimLimitForEligibility(
+                          event.target.value as CampaignRule['eligibility'],
+                          campaign.max_claims_per_user
+                        ),
+                        max_claims_per_email: claimLimitForEligibility(
+                          event.target.value as CampaignRule['eligibility'],
+                          campaign.max_claims_per_email
+                        ),
+                      })
+                    }
+                  >
+                    <option value='per_campaign'>
+                      {t('Per-campaign account limit (configurable count)')}
+                    </option>
+                    <option value='per_package'>
+                      {t('Once per package (one per account)')}
+                    </option>
+                    <option value='unlimited'>{t('Unlimited')}</option>
+                  </select>
+                </Field>
+                <Field
+                  label={t(
+                    campaign.eligibility === 'per_package'
+                      ? 'Maximum claims per account (fixed at 1 per package)'
+                      : 'Maximum claims per account (per campaign scope)'
+                  )}
+                  error={getCampaignFieldError(index, 'max_claims_per_user')}
+                >
                   <Input
                     type='number'
                     min={0}
-                    step={10}
-                    value={item.sort_order}
+                    disabled={
+                      campaign.eligibility === 'unlimited' ||
+                      campaign.eligibility === 'per_package'
+                    }
+                    value={campaign.max_claims_per_user}
                     onChange={(event) =>
-                      updatePackage(index, {
-                        sort_order: Number(event.target.value),
+                      updateCampaign(index, {
+                        max_claims_per_user: Number(event.target.value),
                       })
                     }
                   />
                 </Field>
-                <Field label={t('Visual style')} className='sm:col-span-2'>
+                <Field
+                  label={t(
+                    campaign.eligibility === 'per_package'
+                      ? 'Maximum claims per verified email (fixed at 1 per package)'
+                      : 'Maximum claims per verified email (per campaign scope)'
+                  )}
+                  error={getCampaignFieldError(index, 'max_claims_per_email')}
+                >
+                  <Input
+                    type='number'
+                    min={0}
+                    step={1}
+                    disabled={campaign.eligibility === 'per_package'}
+                    value={campaign.max_claims_per_email}
+                    onChange={(event) =>
+                      updateCampaign(index, {
+                        max_claims_per_email: Math.max(
+                          0,
+                          Number(event.target.value)
+                        ),
+                      })
+                    }
+                  />
+                </Field>
+                <Field
+                  label={t('Derived maximum claims')}
+                  error={getCampaignFieldError(index, 'max_claims_total')}
+                >
+                  <Input
+                    type='number'
+                    readOnly
+                    disabled
+                    value={campaign.max_claims_total}
+                  />
+                  <p className='text-muted-foreground mt-1 text-xs'>
+                    {campaign.max_participants_total > 0
+                      ? `${campaign.max_participants_total} × ${
+                          campaign.eligibility === 'per_package'
+                            ? getApplicablePackageCount(campaign, packages)
+                            : 1
+                        } = ${campaign.max_claims_total}`
+                      : t(
+                          'Unlimited because participant capacity is unlimited'
+                        )}
+                  </p>
+                </Field>
+                <Field
+                  label={t('Maximum participants (0 = unlimited)')}
+                  error={getCampaignFieldError(index, 'max_participants_total')}
+                >
+                  <Input
+                    type='number'
+                    min={0}
+                    step={1}
+                    value={campaign.max_participants_total}
+                    onChange={(event) =>
+                      updateCampaign(index, {
+                        max_participants_total: Math.max(
+                          0,
+                          Number(event.target.value)
+                        ),
+                      })
+                    }
+                  />
+                </Field>
+                <Field
+                  label={t('Slot reservation duration (minutes)')}
+                  error={getCampaignFieldError(index, 'reservation_minutes')}
+                >
+                  <Input
+                    type='number'
+                    min={1}
+                    step={1}
+                    value={campaign.reservation_minutes}
+                    onChange={(event) =>
+                      updateCampaign(index, {
+                        reservation_minutes: Math.max(
+                          1,
+                          Number(event.target.value)
+                        ),
+                      })
+                    }
+                  />
+                </Field>
+                <CampaignStatsPanel
+                  stats={campaignStatsById.get(campaign.id)}
+                />
+                <Field
+                  label={t('Reward calculation')}
+                  error={getCampaignFieldError(index, 'reward_mode')}
+                >
                   <select
                     className='border-input bg-background h-9 w-full rounded-md border px-3 text-sm'
-                    value={item.visual_style || 'default'}
+                    value={campaign.reward_mode}
                     onChange={(event) =>
-                      updatePackage(index, {
-                        visual_style: event.target.value,
+                      updateCampaign(index, {
+                        reward_mode: event.target
+                          .value as CampaignRule['reward_mode'],
                       })
                     }
                   >
-                    <option value='default'>{t('Default')}</option>
-                    <option value='recommended'>{t('Recommended')}</option>
-                    <option value='popular'>{t('Popular')}</option>
-                    <option value='value'>{t('Value')}</option>
+                    <option value='target_total_percent'>
+                      {t('Payment amount percentage, rounded up')}
+                    </option>
+                    <option value='fixed_bonus'>
+                      {t('Fixed bonus by package')}
+                    </option>
                   </select>
                 </Field>
-                {item.selling_points.map((point, pointIndex) => (
-                  <Field
-                    key={`${item.id}-selling-point-${SELLING_POINT_SLOT_KEYS[pointIndex]}`}
-                    label={`${t('Selling point')} ${pointIndex + 1}`}
-                    className='sm:col-span-2'
-                  >
-                    <div className='flex gap-2'>
-                      <Input
-                        value={point}
-                        maxLength={80}
-                        onChange={(event) =>
-                          updatePackage(index, {
-                            selling_points: item.selling_points.map((p, i) =>
-                              i === pointIndex ? event.target.value : p
-                            ),
-                          })
-                        }
-                      />
-                      <Button
-                        type='button'
-                        size='icon'
-                        variant='ghost'
-                        aria-label={t('Delete selling point')}
-                        onClick={() =>
-                          updatePackage(index, {
-                            selling_points: item.selling_points.filter(
-                              (_p, i) => i !== pointIndex
-                            ),
-                          })
-                        }
-                      >
-                        <Trash2 className='size-4' />
-                      </Button>
-                    </div>
-                  </Field>
-                ))}
-                {item.selling_points.length < 3 && (
-                  <div className='sm:col-span-2'>
-                    <Button
-                      type='button'
-                      variant='outline'
-                      size='sm'
-                      onClick={() =>
-                        updatePackage(index, {
-                          selling_points: [...item.selling_points, ''],
-                        })
-                      }
-                    >
-                      <Plus className='size-4' />
-                      {t('Add selling point')}
-                    </Button>
-                  </div>
-                )}
-                <Field label={t('Footer note')} className='sm:col-span-2'>
+                <Field
+                  label={t('Bonus percentage')}
+                  error={getCampaignFieldError(index, 'reward_percent')}
+                >
                   <Input
-                    value={item.footer_note ?? ''}
-                    maxLength={120}
-                    placeholder={t('Optional footer text')}
+                    type='number'
+                    min={0.01}
+                    step={0.01}
+                    disabled={campaign.reward_mode !== 'target_total_percent'}
+                    value={campaign.reward_percent}
                     onChange={(event) =>
-                      updatePackage(index, {
-                        footer_note: event.target.value,
+                      updateCampaign(index, {
+                        reward_percent: Number(event.target.value),
                       })
                     }
                   />
                 </Field>
-                <div className='text-muted-foreground text-xs sm:col-span-2'>
-                  {t(
-                    'Campaign bonus and expiry is managed in campaign settings'
+                <Field
+                  label={t('Bonus validity (days)')}
+                  error={getCampaignFieldError(index, 'valid_days')}
+                >
+                  <Input
+                    type='number'
+                    min={1}
+                    value={campaign.valid_days}
+                    onChange={(event) =>
+                      updateCampaign(index, {
+                        valid_days: Number(event.target.value),
+                      })
+                    }
+                  />
+                </Field>
+                <Field
+                  label={t('Priority')}
+                  error={getCampaignFieldError(index, 'priority')}
+                >
+                  <Input
+                    type='number'
+                    value={campaign.priority}
+                    onChange={(event) =>
+                      updateCampaign(index, {
+                        priority: Number(event.target.value),
+                      })
+                    }
+                  />
+                </Field>
+
+                <div className='space-y-2 md:col-span-2'>
+                  <Label>{t('Eligible packages')}</Label>
+                  <div className='flex flex-wrap gap-4 rounded-md border p-3'>
+                    {packages.map((item) => {
+                      const checked = campaign.package_ids.includes(item.id)
+                      return (
+                        <label
+                          key={item.id}
+                          className='flex items-center gap-2 text-sm'
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(nextChecked) =>
+                              updateCampaign(index, {
+                                package_ids: nextChecked
+                                  ? [...campaign.package_ids, item.id]
+                                  : campaign.package_ids.filter(
+                                      (packageId) => packageId !== item.id
+                                    ),
+                              })
+                            }
+                          />
+                          {item.name}
+                        </label>
+                      )
+                    })}
+                  </div>
+                  {getCampaignFieldError(index, 'package_ids') && (
+                    <p className='text-destructive text-sm'>
+                      {getCampaignFieldError(index, 'package_ids')}
+                    </p>
                   )}
                 </div>
+
+                {campaign.reward_mode === 'fixed_bonus' && (
+                  <div className='grid gap-3 sm:grid-cols-2 md:col-span-2 lg:grid-cols-4'>
+                    {packages.map((item) => (
+                      <Field key={item.id} label={`${item.name} ${t('bonus')}`}>
+                        <Input
+                          type='number'
+                          min={0}
+                          step={0.01}
+                          value={campaign.fixed_bonus[item.id] ?? 0}
+                          onChange={(event) =>
+                            updateCampaign(index, {
+                              fixed_bonus: {
+                                ...campaign.fixed_bonus,
+                                [item.id]: Number(event.target.value),
+                              },
+                            })
+                          }
+                        />
+                      </Field>
+                    ))}
+                    {getCampaignFieldError(index, 'fixed_bonus') && (
+                      <p className='text-destructive sm:col-span-2 lg:col-span-4'>
+                        {getCampaignFieldError(index, 'fixed_bonus')}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <label className='flex items-center gap-3 text-sm md:col-span-2'>
+                  <Checkbox
+                    checked={campaign.stackable}
+                    onCheckedChange={(stackable) =>
+                      updateCampaign(index, { stackable: stackable === true })
+                    }
+                  />
+                  {t(
+                    'Allow this campaign to stack with lower-priority campaigns'
+                  )}
+                </label>
+                {getCampaignFieldError(index, 'stackable') && (
+                  <p className='text-destructive text-sm md:col-span-2'>
+                    {getCampaignFieldError(index, 'stackable')}
+                  </p>
+                )}
               </CardContent>
             </Card>
           ))}
         </div>
-      </div>
-
-      <div className='space-y-3'>
-        <div className='flex items-start justify-between gap-3'>
-          <div>
-            <h4 className='font-medium'>{t('Top-up campaigns')}</h4>
-            <p className='text-muted-foreground text-sm'>
-              {t(
-                'Campaigns are data-only rules. Turn them on only after checking the preview.'
-              )}
-            </p>
-          </div>
-          <Button type='button' variant='outline' onClick={addCampaign}>
-            <Plus className='size-4' />
-            {t('Add campaign')}
-          </Button>
-        </div>
-
-        {campaigns.length === 0 && (
-          <div className='text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm'>
-            {t('No top-up campaign configured.')}
-          </div>
-        )}
-
-        {campaigns.map((campaign, index) => (
-          <Card key={campaign.id} data-card-hover='false'>
-            <CardHeader className='pb-3'>
-              <div className='flex flex-wrap items-center justify-between gap-3'>
-                <div className='flex items-center gap-2'>
-                  <CardTitle className='text-base'>{campaign.name}</CardTitle>
-                  <Badge variant={campaign.enabled ? 'default' : 'secondary'}>
-                    {campaign.enabled ? t('Enabled') : t('Disabled')}
-                  </Badge>
-                </div>
-                <div className='flex items-center gap-2'>
-                  <Switch
-                    checked={campaign.enabled}
-                    onCheckedChange={(enabled) =>
-                      updateCampaign(index, { enabled })
-                    }
-                  />
-                  <Button
-                    type='button'
-                    size='icon'
-                    variant='ghost'
-                    aria-label={t('Delete campaign')}
-                    onClick={() =>
-                      onCampaignsChange(
-                        JSON.stringify(
-                          campaigns.filter(
-                            (_item, itemIndex) => itemIndex !== index
-                          ),
-                          null,
-                          2
-                        )
-                      )
-                    }
-                  >
-                    <Trash2 className='size-4' />
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className='grid gap-4 md:grid-cols-2'>
-              <Field label={t('Internal campaign name')}>
-                <Input
-                  value={campaign.name}
-                  onChange={(event) =>
-                    updateCampaign(index, { name: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label={t('Package badge')}>
-                <Input
-                  value={campaign.badge_text}
-                  onChange={(event) =>
-                    updateCampaign(index, { badge_text: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label={t('Banner title')}>
-                <Input
-                  value={campaign.banner_title}
-                  onChange={(event) =>
-                    updateCampaign(index, { banner_title: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label={t('Banner description')}>
-                <Input
-                  value={campaign.banner_text}
-                  onChange={(event) =>
-                    updateCampaign(index, { banner_text: event.target.value })
-                  }
-                />
-              </Field>
-              <Field label={t('Start time')}>
-                <Input
-                  type='datetime-local'
-                  value={toDateTimeLocal(campaign.starts_at)}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      starts_at: fromDateTimeLocal(event.target.value),
-                    })
-                  }
-                />
-              </Field>
-              <Field label={t('End time')}>
-                <Input
-                  type='datetime-local'
-                  value={toDateTimeLocal(campaign.ends_at)}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      ends_at: fromDateTimeLocal(event.target.value),
-                    })
-                  }
-                />
-              </Field>
-              <Field label={t('Eligibility')}>
-                <select
-                  className='border-input bg-background h-9 w-full rounded-md border px-3 text-sm'
-                  value={campaign.eligibility}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      eligibility: event.target
-                        .value as CampaignRule['eligibility'],
-                      max_claims_per_user:
-                        event.target.value === 'unlimited'
-                          ? 0
-                          : Math.max(campaign.max_claims_per_user, 1),
-                    })
-                  }
-                >
-                  <option value='per_campaign'>{t('Once per campaign')}</option>
-                  <option value='per_package'>
-                    {t('Once per package per account')}
-                  </option>
-                  <option value='unlimited'>{t('Unlimited')}</option>
-                </select>
-              </Field>
-              <Field label={t('Maximum claims per account (0 = unlimited)')}>
-                <Input
-                  type='number'
-                  min={0}
-                  disabled={campaign.eligibility === 'unlimited'}
-                  value={campaign.max_claims_per_user}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      max_claims_per_user: Number(event.target.value),
-                    })
-                  }
-                />
-              </Field>
-              <Field
-                label={t('Maximum claims per verified email (0 = unlimited)')}
-              >
-                <Input
-                  type='number'
-                  min={0}
-                  step={1}
-                  value={campaign.max_claims_per_email}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      max_claims_per_email: Math.max(
-                        0,
-                        Number(event.target.value)
-                      ),
-                    })
-                  }
-                />
-              </Field>
-              <Field label={t('Total campaign slots (0 = unlimited)')}>
-                <Input
-                  type='number'
-                  min={0}
-                  step={1}
-                  value={campaign.max_claims_total}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      max_claims_total: Math.max(0, Number(event.target.value)),
-                    })
-                  }
-                />
-              </Field>
-              <Field label={t('Maximum participants (0 = unlimited)')}>
-                <Input
-                  type='number'
-                  min={0}
-                  step={1}
-                  value={campaign.max_participants_total}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      max_participants_total: Math.max(
-                        0,
-                        Number(event.target.value)
-                      ),
-                    })
-                  }
-                />
-              </Field>
-              <Field label={t('Slot reservation duration (minutes)')}>
-                <Input
-                  type='number'
-                  min={1}
-                  step={1}
-                  value={campaign.reservation_minutes}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      reservation_minutes: Math.max(
-                        1,
-                        Number(event.target.value)
-                      ),
-                    })
-                  }
-                />
-              </Field>
-              <CampaignStatsPanel stats={campaignStatsById.get(campaign.id)} />
-              <Field label={t('Reward calculation')}>
-                <select
-                  className='border-input bg-background h-9 w-full rounded-md border px-3 text-sm'
-                  value={campaign.reward_mode}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      reward_mode: event.target
-                        .value as CampaignRule['reward_mode'],
-                    })
-                  }
-                >
-                  <option value='target_total_percent'>
-                    {t('Payment amount percentage, rounded up')}
-                  </option>
-                  <option value='fixed_bonus'>
-                    {t('Fixed bonus by package')}
-                  </option>
-                </select>
-              </Field>
-              <Field label={t('Bonus percentage')}>
-                <Input
-                  type='number'
-                  min={0.01}
-                  step={0.01}
-                  disabled={campaign.reward_mode !== 'target_total_percent'}
-                  value={campaign.reward_percent}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      reward_percent: Number(event.target.value),
-                    })
-                  }
-                />
-              </Field>
-              <Field label={t('Bonus validity (days)')}>
-                <Input
-                  type='number'
-                  min={1}
-                  value={campaign.valid_days}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      valid_days: Number(event.target.value),
-                    })
-                  }
-                />
-              </Field>
-              <Field label={t('Priority')}>
-                <Input
-                  type='number'
-                  value={campaign.priority}
-                  onChange={(event) =>
-                    updateCampaign(index, {
-                      priority: Number(event.target.value),
-                    })
-                  }
-                />
-              </Field>
-
-              <div className='space-y-2 md:col-span-2'>
-                <Label>{t('Eligible packages')}</Label>
-                <div className='flex flex-wrap gap-4 rounded-md border p-3'>
-                  {packages.map((item) => {
-                    const checked = campaign.package_ids.includes(item.id)
-                    return (
-                      <label
-                        key={item.id}
-                        className='flex items-center gap-2 text-sm'
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={(nextChecked) =>
-                            updateCampaign(index, {
-                              package_ids: nextChecked
-                                ? [...campaign.package_ids, item.id]
-                                : campaign.package_ids.filter(
-                                    (packageId) => packageId !== item.id
-                                  ),
-                            })
-                          }
-                        />
-                        {item.name}
-                      </label>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {campaign.reward_mode === 'fixed_bonus' && (
-                <div className='grid gap-3 sm:grid-cols-2 md:col-span-2 lg:grid-cols-4'>
-                  {packages.map((item) => (
-                    <Field key={item.id} label={`${item.name} ${t('bonus')}`}>
-                      <Input
-                        type='number'
-                        min={0}
-                        step={0.01}
-                        value={campaign.fixed_bonus[item.id] ?? 0}
-                        onChange={(event) =>
-                          updateCampaign(index, {
-                            fixed_bonus: {
-                              ...campaign.fixed_bonus,
-                              [item.id]: Number(event.target.value),
-                            },
-                          })
-                        }
-                      />
-                    </Field>
-                  ))}
-                </div>
-              )}
-
-              <label className='flex items-center gap-3 text-sm md:col-span-2'>
-                <Checkbox
-                  checked={campaign.stackable}
-                  onCheckedChange={(stackable) =>
-                    updateCampaign(index, { stackable: stackable === true })
-                  }
-                />
-                {t(
-                  'Allow this campaign to stack with lower-priority campaigns'
-                )}
-              </label>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      )}
     </div>
   )
 }
@@ -1029,16 +1247,19 @@ function CampaignStat({
 function Field({
   label,
   className,
+  error,
   children,
 }: {
   label: string
   className?: string
+  error?: string
   children: React.ReactNode
 }) {
   return (
     <div className={className}>
       <Label className='mb-1.5 block'>{label}</Label>
       {children}
+      {error && <p className='text-destructive mt-1 text-sm'>{error}</p>}
     </div>
   )
 }

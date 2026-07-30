@@ -1197,6 +1197,7 @@ export function PaymentSettingsSection({
                     packagesValue={form.watch('TopupPackages')}
                     campaignsValue={form.watch('Campaigns')}
                     supportContactsValue={form.watch('SupportContacts')}
+                    hideCampaigns
                     onPackagesChange={(value) =>
                       setPaymentValue('TopupPackages', value)
                     }

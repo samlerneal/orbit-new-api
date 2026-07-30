@@ -87,6 +87,183 @@ func TestNormalizeLegacyCampaignWithReservationMinutesConvertsEligibility(t *tes
 	assert.Equal(t, CampaignEligibilityPerPackage, campaign.Eligibility)
 }
 
+func TestNormalizePaymentCampaignsForSavePreservesExplicitParticipantLimitAndDerivesClaims(t *testing.T) {
+	packages := []TopupPackage{
+		{ID: "experience", Enabled: true},
+		{ID: "standard", Enabled: true},
+		{ID: "advanced", Enabled: true},
+		{ID: "professional", Enabled: true},
+	}
+	campaign := PaymentCampaign{
+		ID:                   "launch-first-topup-30",
+		Name:                 "Launch campaign",
+		Eligibility:          CampaignEligibilityPerCampaign,
+		MaxClaimsPerUser:     1,
+		MaxClaimsPerEmail:    1,
+		MaxClaimsTotal:       100,
+		MaxParticipantsTotal: 30,
+		ReservationMinutes:   3,
+		RewardMode:           CampaignRewardTargetTotalPercent,
+		RewardPercent:        30,
+		RoundingMode:         CampaignRoundingCeilYuan,
+		ValidDays:            45,
+		PackageIDs:           []string{"experience", "standard", "advanced", "professional"},
+	}
+
+	normalized, err := NormalizePaymentCampaignsForSave([]PaymentCampaign{campaign}, packages)
+
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	assert.Equal(t, CampaignEligibilityPerPackage, normalized[0].Eligibility)
+	assert.Equal(t, 30, normalized[0].MaxParticipantsTotal)
+	assert.Equal(t, 120, normalized[0].MaxClaimsTotal)
+}
+
+func TestNormalizePaymentCampaignsForSaveForcesPerPackageClaimCountsToOne(t *testing.T) {
+	packages := []TopupPackage{{ID: "advanced", Enabled: true}}
+	campaign := validCampaignForSafeguardTest()
+	campaign.ID = "four-package"
+	campaign.Eligibility = CampaignEligibilityPerPackage
+	campaign.MaxClaimsPerUser = 4
+	campaign.MaxClaimsPerEmail = 3
+	campaign.MaxParticipantsTotal = 30
+	campaign.MaxClaimsTotal = 99
+	campaign.PackageIDs = []string{"advanced"}
+
+	normalized, err := NormalizePaymentCampaignsForSave([]PaymentCampaign{campaign}, packages)
+
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	assert.Equal(t, 1, normalized[0].MaxClaimsPerUser)
+	assert.Equal(t, 1, normalized[0].MaxClaimsPerEmail)
+}
+
+func TestNormalizePaymentCampaignsForSaveTreatsUnlimitedParticipantsAsUnlimitedClaims(t *testing.T) {
+	packages := []TopupPackage{{ID: "advanced", Enabled: true}}
+	campaign := validCampaignForSafeguardTest()
+	campaign.ID = "unlimited-participants"
+	campaign.Eligibility = CampaignEligibilityPerPackage
+	campaign.MaxParticipantsTotal = 0
+	campaign.MaxClaimsTotal = 100
+	campaign.PackageIDs = []string{"advanced"}
+
+	normalized, err := NormalizePaymentCampaignsForSave([]PaymentCampaign{campaign}, packages)
+
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	assert.Zero(t, normalized[0].MaxParticipantsTotal)
+	assert.Zero(t, normalized[0].MaxClaimsTotal)
+}
+
+func TestNormalizeCampaignAuthorityReadbackAppliesControlledLimits(t *testing.T) {
+	packages := []TopupPackage{{ID: "advanced", Enabled: true}}
+	campaign := validCampaignForSafeguardTest()
+	campaign.ID = "readback-authority"
+	campaign.Eligibility = CampaignEligibilityPerPackage
+	campaign.MaxClaimsPerUser = 9
+	campaign.MaxClaimsPerEmail = 8
+	campaign.MaxParticipantsTotal = 0
+	campaign.MaxClaimsTotal = 100
+	campaign.PackageIDs = []string{"advanced"}
+
+	authoritative := normalizeCampaignAuthority(campaign, packages)
+
+	assert.Equal(t, 1, authoritative.MaxClaimsPerUser)
+	assert.Equal(t, 1, authoritative.MaxClaimsPerEmail)
+	assert.Zero(t, authoritative.MaxParticipantsTotal)
+	assert.Zero(t, authoritative.MaxClaimsTotal)
+}
+
+func TestNormalizePaymentCampaignsForSaveDerivesPerCampaignClaimsByAccountLimit(t *testing.T) {
+	packages := []TopupPackage{
+		{ID: "advanced", Enabled: true},
+		{ID: "professional", Enabled: true},
+	}
+	campaign := validCampaignForSafeguardTest()
+	campaign.ID = "per-campaign-two-claims"
+	campaign.Eligibility = CampaignEligibilityPerCampaign
+	campaign.MaxClaimsPerUser = 2
+	campaign.MaxClaimsPerEmail = 2
+	campaign.MaxParticipantsTotal = 30
+	campaign.MaxClaimsTotal = 100
+	campaign.PackageIDs = []string{"advanced", "professional"}
+
+	normalized, err := NormalizePaymentCampaignsForSave([]PaymentCampaign{campaign}, packages)
+
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	assert.Equal(t, CampaignEligibilityPerCampaign, normalized[0].Eligibility)
+	assert.Equal(t, 60, normalized[0].MaxClaimsTotal)
+}
+
+func TestLaunchCampaignLegacyMigrationIsOneTimeAcrossSaveReadback(t *testing.T) {
+	packages := []TopupPackage{{ID: "advanced", Enabled: true}, {ID: "professional", Enabled: true}}
+	legacy := validCampaignForSafeguardTest()
+	legacy.ID = "launch-first-topup-30"
+	legacy.Eligibility = CampaignEligibilityPerCampaign
+	legacy.MaxClaimsTotal = 100
+	legacy.MaxParticipantsTotal = 0
+
+	migrated, err := NormalizePaymentCampaignsForSave([]PaymentCampaign{legacy}, packages)
+	require.NoError(t, err)
+	require.Len(t, migrated, 1)
+	assert.Equal(t, CampaignEligibilityPerPackage, migrated[0].Eligibility)
+	assert.Equal(t, CampaignLegacyMigrationVersionOne, migrated[0].LegacyMigrationVersion)
+
+	adminEdited := migrated[0]
+	adminEdited.Eligibility = CampaignEligibilityPerCampaign
+	adminEdited.MaxClaimsPerUser = 2
+	adminEdited.MaxClaimsPerEmail = 2
+	adminEdited.MaxParticipantsTotal = 30
+	adminEdited.MaxClaimsTotal = 0
+	readback, err := NormalizePaymentCampaignsForSave([]PaymentCampaign{adminEdited}, packages)
+
+	require.NoError(t, err)
+	require.Len(t, readback, 1)
+	assert.Equal(t, CampaignEligibilityPerCampaign, readback[0].Eligibility)
+	assert.Equal(t, 2, readback[0].MaxClaimsPerUser)
+	assert.Equal(t, 60, readback[0].MaxClaimsTotal)
+	assert.Equal(t, CampaignLegacyMigrationVersionOne, readback[0].LegacyMigrationVersion)
+}
+
+func TestValidatePaymentCampaignsReturnsFieldErrors(t *testing.T) {
+	packages := []TopupPackage{{ID: "advanced", Enabled: true}}
+	campaign := validCampaignForSafeguardTest()
+	campaign.PackageIDs = []string{"advanced"}
+	campaign.StartsAt = -1
+	campaign.EndsAt = -2
+	campaign.ReservationMinutes = 0
+	campaign.RewardPercent = 0
+
+	err := ValidatePaymentCampaigns([]PaymentCampaign{campaign}, packages)
+
+	require.Error(t, err)
+	var validationErrors *PaymentCampaignValidationErrors
+	require.ErrorAs(t, err, &validationErrors)
+	assert.Contains(t, validationErrors.FieldErrors(), "campaigns.0.starts_at")
+	assert.Contains(t, validationErrors.FieldErrors(), "campaigns.0.ends_at")
+	assert.Contains(t, validationErrors.FieldErrors(), "campaigns.0.reservation_minutes")
+	assert.Contains(t, validationErrors.FieldErrors(), "campaigns.0.reward_percent")
+}
+
+func TestValidatePaymentCampaignsRejectsAmbiguousStackingPriority(t *testing.T) {
+	packages := []TopupPackage{{ID: "advanced", Enabled: true}}
+	first := validCampaignForSafeguardTest()
+	first.ID = "first"
+	first.Enabled = true
+	first.Priority = 10
+	first.PackageIDs = []string{"advanced"}
+	second := first
+	second.ID = "second"
+
+	err := ValidatePaymentCampaigns([]PaymentCampaign{first, second}, packages)
+
+	require.Error(t, err)
+	var validationErrors *PaymentCampaignValidationErrors
+	require.ErrorAs(t, err, &validationErrors)
+	assert.Contains(t, validationErrors.FieldErrors(), "campaigns.1.priority")
+}
+
 func TestGetPaymentCampaignsReturnsDeepCopy(t *testing.T) {
 	campaigns := GetPaymentCampaigns()
 	require.NotEmpty(t, campaigns)

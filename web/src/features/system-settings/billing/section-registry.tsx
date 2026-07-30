@@ -25,6 +25,7 @@ import { PaymentSettingsSection } from '../integrations/payment-settings-section
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { CampaignManagementSection } from './campaign-management-section'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
@@ -187,6 +188,16 @@ const BILLING_SECTIONS = [
           confirmedAt: settings['payment_setting.compliance_confirmed_at'] ?? 0,
           confirmedBy: settings['payment_setting.compliance_confirmed_by'] ?? 0,
         }}
+      />
+    ),
+  },
+  {
+    id: 'campaigns',
+    titleKey: 'Campaign Management',
+    build: (settings: BillingSettings) => (
+      <CampaignManagementSection
+        packagesValue={settings['payment_setting.topup_packages']}
+        campaignsValue={settings['payment_setting.campaigns']}
       />
     ),
   },

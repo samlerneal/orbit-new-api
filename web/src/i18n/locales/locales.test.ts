@@ -55,6 +55,23 @@ const O005_MIGRATED_KEYS = [
   'd',
 ]
 
+const O018_CAMPAIGN_SOURCE_FILES = [
+  '../../features/system-settings/billing/campaign-management-section.tsx',
+  '../../features/system-settings/integrations/topup-rules-editor.tsx',
+]
+const O018_LOCALE_SAME_TEXT_KEYS = new Set(['QQ'])
+
+function loadO018CampaignKeys(): string[] {
+  const keys = new Set<string>()
+  for (const relativePath of O018_CAMPAIGN_SOURCE_FILES) {
+    const source = readFileSync(resolve(LOCALE_DIR, relativePath), 'utf-8')
+    for (const match of source.matchAll(/\bt\(\s*['`]([^'`]+)['`]/g)) {
+      keys.add(match[1])
+    }
+  }
+  return [...keys]
+}
+
 describe('locale file structure', () => {
   test('zh.json has only translation as root key', () => {
     const zh = loadLocale('zh.json')
@@ -97,6 +114,37 @@ describe('O-005 migrated keys are inside translation', () => {
       }
     })
   }
+})
+
+describe('O-018 campaign management locale completeness', () => {
+  const campaignKeys = loadO018CampaignKeys()
+
+  for (const filename of ['zh.json', 'en.json']) {
+    test(`${filename} contains every literal campaign-management t key`, () => {
+      const locale = loadLocale(filename)
+      const translation = locale.translation as Record<string, string>
+      for (const key of campaignKeys) {
+        assert.equal(
+          typeof translation[key],
+          'string',
+          `${filename}: missing campaign-management key "${key}"`
+        )
+      }
+    })
+  }
+
+  test('zh.json campaign-management values do not fall back to source English', () => {
+    const zh = loadLocale('zh.json').translation as Record<string, string>
+    const en = loadLocale('en.json').translation as Record<string, string>
+    for (const key of campaignKeys) {
+      if (O018_LOCALE_SAME_TEXT_KEYS.has(key)) continue
+      assert.notEqual(
+        zh[key],
+        en[key],
+        `zh.json: campaign-management key "${key}" still uses English text`
+      )
+    }
+  })
 })
 
 describe('no business keys outside translation', () => {

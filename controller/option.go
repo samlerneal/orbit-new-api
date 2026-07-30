@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -128,6 +129,19 @@ func GetPaymentCampaignStats(c *gin.Context) {
 type OptionUpdateRequest struct {
 	Key   string `json:"key"`
 	Value any    `json:"value"`
+}
+
+func writePaymentCampaignValidationError(c *gin.Context, err error) {
+	var validationErrors *operation_setting.PaymentCampaignValidationErrors
+	if errors.As(err, &validationErrors) {
+		c.JSON(http.StatusOK, gin.H{
+			"success":      false,
+			"message":      "充值活动配置无效: " + validationErrors.Error(),
+			"field_errors": validationErrors.FieldErrors(),
+		})
+		return
+	}
+	common.ApiErrorMsg(c, "充值活动配置无效: "+err.Error())
 }
 
 func UpdateOption(c *gin.Context) {
@@ -355,11 +369,29 @@ func UpdateOption(c *gin.Context) {
 		}
 	case "payment_setting.campaigns":
 		var campaigns []operation_setting.PaymentCampaign
-		if err = json.Unmarshal([]byte(option.Value.(string)), &campaigns); err == nil {
-			err = operation_setting.ValidatePaymentCampaigns(campaigns, operation_setting.GetTopupPackages())
+		if err = json.Unmarshal([]byte(option.Value.(string)), &campaigns); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "充值活动配置无效: JSON 格式错误",
+				"field_errors": map[string]string{
+					"campaigns": "JSON 格式错误",
+				},
+			})
+			return
+		}
+		campaigns, err = operation_setting.NormalizePaymentCampaignsForSave(
+			campaigns,
+			operation_setting.GetTopupPackages(),
+		)
+		if err == nil {
+			var encoded []byte
+			encoded, err = json.Marshal(campaigns)
+			if err == nil {
+				option.Value = string(encoded)
+			}
 		}
 		if err != nil {
-			common.ApiErrorMsg(c, "充值活动配置无效: "+err.Error())
+			writePaymentCampaignValidationError(c, err)
 			return
 		}
 	case "payment_setting.support_contacts":
@@ -372,7 +404,13 @@ func UpdateOption(c *gin.Context) {
 			return
 		}
 	}
-	err = model.UpdateOption(option.Key, option.Value.(string))
+	if option.Key == "payment_setting.campaigns" {
+		err = model.UpdateOptionsBulk(map[string]string{
+			option.Key: option.Value.(string),
+		})
+	} else {
+		err = model.UpdateOption(option.Key, option.Value.(string))
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -381,8 +419,15 @@ func UpdateOption(c *gin.Context) {
 	recordManageAudit(c, "option.update", map[string]interface{}{
 		"key": option.Key,
 	})
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"success": true,
 		"message": "",
-	})
+	}
+	if option.Key == "payment_setting.campaigns" {
+		response["data"] = gin.H{
+			"saved_at":  common.GetTimestamp(),
+			"campaigns": operation_setting.GetPaymentCampaigns(),
+		}
+	}
+	c.JSON(http.StatusOK, response)
 }

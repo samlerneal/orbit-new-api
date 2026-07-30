@@ -93,6 +93,31 @@ func createCampaignTestTopUp(
 	return topUp
 }
 
+func createCampaignTestTopUpForPackage(
+	t *testing.T,
+	user User,
+	campaign operation_setting.PaymentCampaign,
+	packageID string,
+	tradeNo string,
+	now int64,
+) TopUp {
+	t.Helper()
+	if user.AffCode == "" {
+		user.AffCode = user.Username
+	}
+	require.NoError(t, DB.Create(&user).Error)
+	topUp := TopUp{
+		UserId: user.Id, PackageId: packageID, CreditQuota: 1_000,
+		Money: 98, TradeNo: tradeNo, PaymentMethod: "wxpay",
+		PaymentProvider: PaymentProviderEpay, CreateTime: now,
+		Status: common.TopUpStatusPending,
+	}
+	snapshot := campaignTestSnapshot(campaign)
+	snapshot.PackageId = packageID
+	require.NoError(t, CreateTopUpWithCampaignReservations(&topUp, []CampaignAwardSnapshot{snapshot}, now))
+	return topUp
+}
+
 func TestCampaignRewardUsesPaymentAmountAndRoundsUp(t *testing.T) {
 	campaign := operation_setting.PaymentCampaign{
 		RewardMode:    operation_setting.CampaignRewardTargetTotalPercent,
@@ -235,7 +260,7 @@ func TestMigratePaymentCampaignParticipantsPreservesIdentityDeadlineAndIsIdempot
 	require.NotNil(t, admitted.ParticipantKey)
 	assert.Equal(t, campaignParticipantPrefix(campaign)+fmt.Sprintf(":user:%d", admittedUser.Id), *admitted.ParticipantKey)
 	require.NotNil(t, admitted.EmailParticipantKey)
-	assert.Equal(t, campaignParticipantEmailPrefix(campaign, admittedEmailHash), *admitted.EmailParticipantKey)
+	assert.Equal(t, campaignParticipantEmailPrefix(campaign, admittedUser.Id, admittedEmailHash), *admitted.EmailParticipantKey)
 	require.NotNil(t, admitted.CampaignSlotKey)
 	assert.Equal(t, now-120, admitted.AdmittedAt)
 	assert.Zero(t, admitted.ReservedUntil)
@@ -250,7 +275,7 @@ func TestMigratePaymentCampaignParticipantsPreservesIdentityDeadlineAndIsIdempot
 	assert.Equal(t, reservedEmailHash, reserved.EmailHash)
 	require.NotNil(t, reserved.ParticipantKey)
 	require.NotNil(t, reserved.EmailParticipantKey)
-	assert.Equal(t, campaignParticipantEmailPrefix(campaign, reservedEmailHash), *reserved.EmailParticipantKey)
+	assert.Equal(t, campaignParticipantEmailPrefix(campaign, reservedUser.Id, reservedEmailHash), *reserved.EmailParticipantKey)
 	require.NotNil(t, reserved.CampaignSlotKey)
 	assert.Equal(t, now+120, reserved.ReservedUntil)
 	assert.Zero(t, reserved.AdmittedAt)
@@ -276,6 +301,37 @@ func TestMigratePaymentCampaignParticipantsPreservesIdentityDeadlineAndIsIdempot
 	assert.Equal(t, firstAdmittedSlot, *admitted.CampaignSlotKey)
 	assert.Equal(t, firstReservedSlot, *reserved.CampaignSlotKey)
 	assert.Equal(t, now+120, reserved.ReservedUntil)
+}
+
+func TestMigratePerCampaignParticipantsAllowsSameEmailAcrossHistoricalPackages(t *testing.T) {
+	setupEpayTopupTestDB(t)
+	campaign := campaignTestRule("per-campaign-participant-migration", 30)
+	campaign.Eligibility = operation_setting.CampaignEligibilityPerCampaign
+	campaign.MaxClaimsPerUser = 1
+	campaign.MaxClaimsPerEmail = 2
+	campaign.PackageIDs = []string{"advanced", "professional"}
+	useTestCampaign(t, campaign)
+	now := common.GetTimestamp()
+	firstUser := User{Username: "migration-shared-email-a", Email: "migration-shared@example.com", AffCode: "migration-shared-email-a"}
+	secondUser := User{Username: "migration-shared-email-b", Email: "migration-shared@example.com", AffCode: "migration-shared-email-b"}
+	require.NoError(t, DB.Create(&firstUser).Error)
+	require.NoError(t, DB.Create(&secondUser).Error)
+	sharedHash := CampaignEmailHash(firstUser.Email)
+	claims := []PaymentCampaignClaim{
+		{CampaignId: campaign.ID, UserId: firstUser.Id, PackageId: "advanced", TopUpId: 3101, Status: CampaignClaimStatusAwarded, EmailHash: sharedHash, AwardedAt: now - 20, CreatedAt: now - 30},
+		{CampaignId: campaign.ID, UserId: secondUser.Id, PackageId: "professional", TopUpId: 3102, Status: CampaignClaimStatusAwarded, EmailHash: sharedHash, AwardedAt: now - 10, CreatedAt: now - 15},
+	}
+	require.NoError(t, DB.Create(&claims).Error)
+
+	require.NoError(t, migratePaymentCampaignParticipants())
+	var participants []PaymentCampaignParticipant
+	require.NoError(t, DB.Where("campaign_id = ?", campaign.ID).Order("user_id ASC").Find(&participants).Error)
+	require.Len(t, participants, 2)
+	assert.Equal(t, campaignParticipantEmailPrefix(campaign, firstUser.Id, sharedHash), *participants[0].EmailParticipantKey)
+	assert.Equal(t, campaignParticipantEmailPrefix(campaign, secondUser.Id, sharedHash), *participants[1].EmailParticipantKey)
+	var state PaymentCampaignState
+	require.NoError(t, DB.First(&state, "campaign_id = ?", campaign.ID).Error)
+	assert.Equal(t, 1, state.ParticipantMigrationVersion)
 }
 
 func TestMigratePaymentCampaignParticipantsRollsBackOnFailure(t *testing.T) {
@@ -473,6 +529,136 @@ func TestCampaignEmailLimitIncludesLiveReservations(t *testing.T) {
 		now,
 	)
 	assert.ErrorIs(t, err, ErrCampaignReservationUnavailable)
+}
+
+func TestPerCampaignReservationCountsSameAccountAcrossPackages(t *testing.T) {
+	setupEpayTopupTestDB(t)
+	campaign := campaignTestRule("per-campaign-account", 30)
+	campaign.Eligibility = operation_setting.CampaignEligibilityPerCampaign
+	campaign.MaxClaimsPerUser = 2
+	campaign.MaxClaimsPerEmail = 2
+	campaign.MaxClaimsTotal = 60
+	campaign.PackageIDs = []string{"advanced", "professional"}
+	useTestCampaign(t, campaign)
+	now := common.GetTimestamp()
+	user := User{Username: "per-campaign-account", Email: "per-campaign-account@example.com"}
+	first := createCampaignTestTopUpForPackage(t, user, campaign, "advanced", "per-campaign-account-1", now)
+	userID := first.UserId
+	second := TopUp{
+		UserId: userID, PackageId: "professional", CreditQuota: 1_000,
+		Money: 490, TradeNo: "per-campaign-account-2", PaymentMethod: "wxpay",
+		PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending,
+	}
+	require.NoError(t, CreateTopUpWithCampaignReservations(&second, []CampaignAwardSnapshot{func() CampaignAwardSnapshot {
+		snapshot := campaignTestSnapshot(campaign)
+		snapshot.PackageId = "professional"
+		return snapshot
+	}()}, now))
+	third := TopUp{
+		UserId: userID, PackageId: "advanced", CreditQuota: 1_000,
+		Money: 98, TradeNo: "per-campaign-account-3", PaymentMethod: "wxpay",
+		PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending,
+	}
+	assert.ErrorIs(t, CreateTopUpWithCampaignReservations(&third, []CampaignAwardSnapshot{campaignTestSnapshot(campaign)}, now), ErrCampaignReservationUnavailable)
+}
+
+func TestPerCampaignReservationCountsSameEmailAcrossPackages(t *testing.T) {
+	setupEpayTopupTestDB(t)
+	campaign := campaignTestRule("per-campaign-email", 30)
+	campaign.Eligibility = operation_setting.CampaignEligibilityPerCampaign
+	campaign.MaxClaimsPerUser = 1
+	campaign.MaxClaimsPerEmail = 2
+	campaign.MaxClaimsTotal = 60
+	campaign.PackageIDs = []string{"advanced", "professional"}
+	useTestCampaign(t, campaign)
+	now := common.GetTimestamp()
+	createCampaignTestTopUpForPackage(t, User{Username: "per-campaign-email-a", Email: "shared-per-campaign@example.com"}, campaign, "advanced", "per-campaign-email-1", now)
+	createCampaignTestTopUpForPackage(t, User{Username: "per-campaign-email-b", Email: "shared-per-campaign@example.com"}, campaign, "professional", "per-campaign-email-2", now)
+	thirdUser := User{Username: "per-campaign-email-c", Email: "shared-per-campaign@example.com", AffCode: "per-campaign-email-c"}
+	require.NoError(t, DB.Create(&thirdUser).Error)
+	third := TopUp{
+		UserId: thirdUser.Id, PackageId: "advanced", CreditQuota: 1_000,
+		Money: 98, TradeNo: "per-campaign-email-3", PaymentMethod: "wxpay",
+		PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending,
+	}
+	assert.ErrorIs(t, CreateTopUpWithCampaignReservations(&third, []CampaignAwardSnapshot{campaignTestSnapshot(campaign)}, now), ErrCampaignReservationUnavailable)
+}
+
+func TestPerCampaignTwoClaimCapacityAndStatsUseThirtyByTwo(t *testing.T) {
+	setupEpayTopupTestDB(t)
+	campaign := campaignTestRule("per-campaign-capacity", 30)
+	campaign.Eligibility = operation_setting.CampaignEligibilityPerCampaign
+	campaign.MaxClaimsPerUser = 2
+	campaign.MaxClaimsPerEmail = 2
+	campaign.MaxClaimsTotal = 60
+	campaign.PackageIDs = []string{"advanced", "professional"}
+	useTestCampaign(t, campaign)
+	now := common.GetTimestamp()
+	for index := 0; index < 30; index++ {
+		user := User{
+			Username: fmt.Sprintf("per-campaign-capacity-%d", index),
+			Email:    fmt.Sprintf("per-campaign-capacity-%d@example.com", index),
+		}
+		createCampaignTestTopUpForPackage(t, user, campaign, "advanced", fmt.Sprintf("per-campaign-capacity-a-%d", index), now)
+		userID := user.Id
+		var persisted User
+		require.NoError(t, DB.Where("username = ?", user.Username).First(&persisted).Error)
+		userID = persisted.Id
+		second := TopUp{
+			UserId: userID, PackageId: "professional", CreditQuota: 1_000,
+			Money: 490, TradeNo: fmt.Sprintf("per-campaign-capacity-p-%d", index), PaymentMethod: "wxpay",
+			PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending,
+		}
+		snapshot := campaignTestSnapshot(campaign)
+		snapshot.PackageId = "professional"
+		require.NoError(t, CreateTopUpWithCampaignReservations(&second, []CampaignAwardSnapshot{snapshot}, now))
+	}
+
+	stats, err := GetPaymentCampaignClaimStats(now)
+	require.NoError(t, err)
+	require.Len(t, stats, 1)
+	assert.True(t, stats[0].ParticipantLimited)
+	assert.EqualValues(t, 30, stats[0].ParticipantsTotal)
+	assert.EqualValues(t, 60, stats[0].Total)
+	assert.EqualValues(t, 60, stats[0].ClaimsReserved)
+	assert.Zero(t, stats[0].Remaining)
+
+	extra := User{Username: "per-campaign-capacity-extra", Email: "per-campaign-capacity-extra@example.com", AffCode: "per-campaign-capacity-extra"}
+	require.NoError(t, DB.Create(&extra).Error)
+	extraTopUp := TopUp{
+		UserId: extra.Id, PackageId: "advanced", CreditQuota: 1_000,
+		Money: 98, TradeNo: "per-campaign-capacity-extra", PaymentMethod: "wxpay",
+		PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending,
+	}
+	assert.ErrorIs(t, CreateTopUpWithCampaignReservations(&extraTopUp, []CampaignAwardSnapshot{campaignTestSnapshot(campaign)}, now), ErrCampaignReservationUnavailable)
+}
+
+func TestPerPackageCampaignRejectsSecondReservationForSameAccountAndPackage(t *testing.T) {
+	setupEpayTopupTestDB(t)
+	campaign := campaignTestRule("same-account-package", 30)
+	campaign.MaxClaimsPerUser = 4
+	campaign.MaxClaimsPerEmail = 4
+	useTestCampaign(t, campaign)
+	now := common.GetTimestamp()
+	user := User{Username: "same-account-package", Email: "same-account-package@example.com", AffCode: "same-account-package"}
+	first := createCampaignTestTopUp(t, user, campaign, "same-account-package-first", now)
+	require.NotZero(t, first.Id)
+
+	second := TopUp{
+		UserId: first.UserId, PackageId: "advanced", CreditQuota: 1_000,
+		Money: 98, TradeNo: "same-account-package-second", PaymentMethod: "wxpay",
+		PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending,
+	}
+	err := CreateTopUpWithCampaignReservations(
+		&second,
+		[]CampaignAwardSnapshot{campaignTestSnapshot(campaign)},
+		now,
+	)
+
+	assert.ErrorIs(t, err, ErrCampaignReservationUnavailable)
+	var secondCount int64
+	require.NoError(t, DB.Model(&TopUp{}).Where("trade_no = ?", second.TradeNo).Count(&secondCount).Error)
+	assert.Zero(t, secondCount)
 }
 
 func TestCampaignEmailLimitSurvivesOwnerEmailChange(t *testing.T) {

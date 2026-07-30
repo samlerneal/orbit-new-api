@@ -508,7 +508,10 @@ func campaignParticipantPrefix(campaign operation_setting.PaymentCampaign) strin
 	return fmt.Sprintf("%s:participant", campaign.ID)
 }
 
-func campaignParticipantEmailPrefix(campaign operation_setting.PaymentCampaign, emailHash string) string {
+func campaignParticipantEmailPrefix(campaign operation_setting.PaymentCampaign, userId int, emailHash string) string {
+	if campaign.Eligibility == operation_setting.CampaignEligibilityPerCampaign {
+		return fmt.Sprintf("%s:user:%d:email:%s:participant", campaign.ID, userId, emailHash)
+	}
 	return fmt.Sprintf("%s:email:%s:participant", campaign.ID, emailHash)
 }
 
@@ -553,7 +556,10 @@ func findOrCreateParticipantLockedTx(
 
 	var emailParticipantKey *string
 	if emailHash != "" {
-		emailKeyVal := fmt.Sprintf("%s:email:%s:participant", campaign.ID, emailHash)
+		// per_campaign email limits are enforced by claim reservations across
+		// the activity; participant identity remains account-scoped so that
+		// distinct accounts sharing an email can exercise that limit.
+		emailKeyVal := campaignParticipantEmailPrefix(campaign, userId, emailHash)
 		emailParticipantKey = &emailKeyVal
 		// Reject when another user already holds this email participant key.
 		var existingByEmail PaymentCampaignParticipant
@@ -725,10 +731,14 @@ func buildCampaignClaimKeysForPackageTx(
 			return campaignReservationKeys{}, false, err
 		}
 	}
+	emailPrefix := fmt.Sprintf("%s:email:%s", campaign.ID, emailHash)
+	if campaign.Eligibility == operation_setting.CampaignEligibilityPerPackage {
+		emailPrefix = fmt.Sprintf("%s:package:%s", emailPrefix, topUp.PackageId)
+	}
 	emailKey, err := firstAvailableCampaignKeyTx(
 		tx, campaign.ID, "email_claim_key", campaign.MaxClaimsPerEmail, now,
 		func(slot int) string {
-			return fmt.Sprintf("%s:package:%s:email:%s:slot:%d", campaign.ID, topUp.PackageId, emailHash, slot)
+			return fmt.Sprintf("%s:slot:%d", emailPrefix, slot)
 		},
 	)
 	if err != nil || (campaign.MaxClaimsPerEmail > 0 && emailKey == nil) {
@@ -1350,7 +1360,7 @@ func upsertParticipantMigrationSourceTx(
 	participantKey := ptrStr(fmt.Sprintf("%s:user:%d", campaignParticipantPrefix(campaign), source.UserId))
 	var emailParticipantKey *string
 	if source.EmailHash != "" {
-		emailParticipantKey = ptrStr(campaignParticipantEmailPrefix(campaign, source.EmailHash))
+		emailParticipantKey = ptrStr(campaignParticipantEmailPrefix(campaign, source.UserId, source.EmailHash))
 	}
 	campaignSlotKey := existing.CampaignSlotKey
 	if campaign.MaxParticipantsTotal > 0 && campaignSlotKey == nil {
