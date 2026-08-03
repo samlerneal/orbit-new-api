@@ -63,7 +63,7 @@ export function Hero(props: HeroProps) {
           }
         >
           <BookOpen className='text-muted-foreground/80 group-hover:text-foreground size-4 transition-colors duration-200' />
-          <span>{t('Docs')}</span>
+          <span>{t('Usage guide')}</span>
         </Button>
       )
     }
@@ -74,7 +74,7 @@ export function Hero(props: HeroProps) {
         render={<Link to={docsUrl} />}
       >
         <BookOpen className='text-muted-foreground/80 group-hover:text-foreground size-4 transition-colors duration-200' />
-        <span>{t('Docs')}</span>
+        <span>{t('Usage guide')}</span>
       </Button>
     )
   }
