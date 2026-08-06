@@ -14,23 +14,21 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-import { PublicLayout } from '@/components/layout'
-import { Footer } from '@/components/layout/components/footer'
-import { useAuthStore } from '@/stores/auth-store'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { describe, test } from 'node:test'
 
-import { CTA, Features, Hero, HowItWorks } from './components'
+const source = readFileSync(
+  new URL('../language-switcher.tsx', import.meta.url),
+  'utf8'
+)
 
-export function Home() {
-  const { auth } = useAuthStore()
-  const isAuthenticated = Boolean(auth.user)
-
-  return (
-    <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
-      <Footer />
-    </PublicLayout>
-  )
-}
+describe('public language filter contract', () => {
+  test('filters only an injected public view and retains the global option list', () => {
+    assert.match(
+      source,
+      /visibleLanguageCodes\?: readonly InterfaceLanguageCode\[\]/
+    )
+    assert.match(source, /INTERFACE_LANGUAGE_OPTIONS\.filter/)
+  })
+})

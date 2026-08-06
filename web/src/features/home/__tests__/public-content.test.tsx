@@ -17,24 +17,30 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { createElement } from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
+import { hasCompletePublicHomeCatalog } from '../constants'
 
-// @ts-expect-error Bun provides mock.module at runtime.
-const { mock } = await import('bun:test')
-mock.module('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
-}))
-mock.module('@tanstack/react-router', () => ({
-  Link: (props: { children?: React.ReactNode }) =>
-    createElement('a', props, props.children),
-}))
-const { Hero } = await import('../hero')
+describe('public Home catalog contract', () => {
+  test('accepts the Owner-confirmed catalog sources', () => {
+    assert.equal(
+      hasCompletePublicHomeCatalog({
+        availableModels: ['GPT'],
+        plannedModels: ['Claude', 'Gemini', 'xAI'],
+        availableSource: 'Owner production confirmation',
+        plannedSource: 'Owner roadmap',
+      }),
+      true
+    )
+  })
 
-describe('public hero content', () => {
-  test('renders the Owner-approved copy and console action', () => {
-    const markup = renderToStaticMarkup(createElement(Hero))
-    assert.match(markup, /Public hero title/)
-    assert.match(markup, /Public open console/)
+  test('rejects overlapping catalog entries even when both sources exist', () => {
+    assert.equal(
+      hasCompletePublicHomeCatalog({
+        availableModels: ['model-a'],
+        plannedModels: ['model-a'],
+        availableSource: 'production data',
+        plannedSource: 'Owner roadmap',
+      }),
+      false
+    )
   })
 })

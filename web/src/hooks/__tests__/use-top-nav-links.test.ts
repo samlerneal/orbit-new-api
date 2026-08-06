@@ -2,9 +2,9 @@
 Copyright (C) 2023-2026 QuantumNous
 
 This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
 
 This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -20,27 +20,24 @@ import { describe, test } from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-// @ts-expect-error Bun 1.3.14 provides mock.module at runtime; the app tsconfig only declares Node types.
+// @ts-expect-error Bun provides mock.module at runtime.
 const { mock } = await import('bun:test')
-
 let currentStatus: Record<string, unknown> | null = null
 
 mock.module('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
-
 mock.module('@/hooks/use-status', () => ({
   useStatus: () => ({ status: currentStatus }),
 }))
-
 mock.module('@/stores/auth-store', () => ({
   useAuthStore: () => ({ auth: { user: null } }),
 }))
-
 mock.module('@/lib/nav-modules', () => ({
   parseHeaderNavModulesFromStatus: () => ({
     home: true,
     console: true,
+    rankings: { enabled: true, requireAuth: false },
     docs: true,
     about: true,
   }),
@@ -48,44 +45,64 @@ mock.module('@/lib/nav-modules', () => ({
 
 const { useTopNavLinks } = await import('../use-top-nav-links')
 
-function HookProbe() {
-  const links = useTopNavLinks()
-
-  return createElement('output', { 'data-links': JSON.stringify(links) }, null)
+function HookProbe(props: { scope?: 'default' | 'public' }) {
+  return createElement('output', {
+    'data-links': JSON.stringify(useTopNavLinks({ scope: props.scope })),
+  })
 }
 
-function renderTopNavLinks(status: Record<string, unknown> | null) {
-  currentStatus = status
-  const markup = renderToStaticMarkup(createElement(HookProbe))
-  const linksAttribute = markup.match(/data-links="([^"]+)"/)?.[1]
+describe('top navigation scope contract', () => {
+  test('keeps existing logged-in navigation semantics by default', () => {
+    currentStatus = { docs_link: 'https://example.test/guide' }
+    const markup = renderToStaticMarkup(createElement(HookProbe, {}))
+    const links = JSON.parse(
+      markup.match(/data-links="([^"]+)"/)?.[1].replaceAll('&quot;', '"') ||
+        '[]'
+    ) as Array<{ title: string }>
 
-  assert.ok(linksAttribute)
-  return JSON.parse(linksAttribute.replaceAll('&quot;', '"')) as Array<{
-    title: string
-    href: string
-    external?: boolean
-  }>
-}
-
-describe('top navigation usage guide contract', () => {
-  test('returns the dynamic external Usage guide link when docs_link exists', () => {
-    const links = renderTopNavLinks({ docs_link: 'https://example.test/guide' })
-    const usageGuideLink = links.find((link) => link.title === 'Usage guide')
-
-    assert.deepEqual(usageGuideLink, {
-      title: 'Usage guide',
-      href: 'https://example.test/guide',
-      external: true,
-    })
+    assert.deepEqual(
+      links.map((link) => link.title),
+      ['Home', 'Console', 'Rankings', 'Usage guide', 'About']
+    )
   })
 
-  test('returns the internal docs fallback when docs_link is absent', () => {
-    const links = renderTopNavLinks(null)
-    const usageGuideLink = links.find((link) => link.title === 'Usage guide')
+  test('keeps public destinations independent from dashboard modules', () => {
+    currentStatus = { docs_link: 'https://example.test/guide' }
+    const markup = renderToStaticMarkup(
+      createElement(HookProbe, { scope: 'public' })
+    )
+    const links = JSON.parse(
+      markup.match(/data-links="([^"]+)"/)?.[1].replaceAll('&quot;', '"') ||
+        '[]'
+    ) as Array<{ title: string; href: string; requiresAuth?: boolean }>
 
-    assert.deepEqual(usageGuideLink, {
-      title: 'Usage guide',
-      href: '/docs',
-    })
+    assert.deepEqual(
+      links.map((link) => link.title),
+      ['Console', 'Models', 'Public tutorial', 'Chat']
+    )
+    assert.equal(
+      links.find((link) => link.title === 'Chat')?.href,
+      '/playground'
+    )
+    assert.equal(
+      links.find((link) => link.title === 'Chat')?.requiresAuth,
+      true
+    )
+  })
+
+  test('falls back to internal docs when the configured URL is unsafe', () => {
+    currentStatus = { docs_link: 'javascript:alert(1)' }
+    const markup = renderToStaticMarkup(
+      createElement(HookProbe, { scope: 'public' })
+    )
+    const links = JSON.parse(
+      markup.match(/data-links="([^"]+)"/)?.[1].replaceAll('&quot;', '"') ||
+        '[]'
+    ) as Array<{ title: string; href: string }>
+
+    assert.equal(
+      links.find((link) => link.title === 'Public tutorial')?.href,
+      '/docs'
+    )
   })
 })

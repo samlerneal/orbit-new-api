@@ -14,23 +14,17 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-import { PublicLayout } from '@/components/layout'
-import { Footer } from '@/components/layout/components/footer'
-import { useAuthStore } from '@/stores/auth-store'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { describe, test } from 'node:test'
 
-import { CTA, Features, Hero, HowItWorks } from './components'
+const source = readFileSync(
+  new URL('../public-layout.tsx', import.meta.url),
+  'utf8'
+)
 
-export function Home() {
-  const { auth } = useAuthStore()
-  const isAuthenticated = Boolean(auth.user)
-
-  return (
-    <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
-      <Footer />
-    </PublicLayout>
-  )
-}
+describe('public layout offset contract', () => {
+  test('owns the two-row mobile and one-row desktop content offset', () => {
+    assert.match(source, /pt-28 md:pt-20/)
+  })
+})

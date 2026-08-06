@@ -60,6 +60,31 @@ const O018_CAMPAIGN_SOURCE_FILES = [
   '../../features/system-settings/integrations/topup-rules-editor.tsx',
 ]
 const O018_LOCALE_SAME_TEXT_KEYS = new Set(['QQ'])
+const O021_PUBLIC_KEYS = [
+  'Available now',
+  'Contact support',
+  'Mydaily API operator',
+  'Modified source',
+  'Open source license',
+  'Public CTA description',
+  'Public CTA title',
+  'Public catalog ready',
+  'Public catalog description',
+  'Public catalog title',
+  'Public footer navigation',
+  'Public hero description',
+  'Public hero title',
+  'Public navigation',
+  'Public open console',
+  'Public step one',
+  'Public step three',
+  'Public step two',
+  'Public steps description',
+  'Public steps title',
+  'Public tutorial',
+  'Public view tutorial',
+  'Under preparation',
+]
 
 function loadO018CampaignKeys(): string[] {
   const keys = new Set<string>()
@@ -159,4 +184,23 @@ describe('no business keys outside translation', () => {
     const rootKeys = Object.keys(en).filter((k) => k !== 'translation')
     assert.equal(rootKeys.length, 0)
   })
+})
+
+describe('O-021 public page locale completeness', () => {
+  for (const filename of ['zh.json', 'zh-TW.json', 'en.json', 'ru.json']) {
+    test(`${filename} contains all public-page keys`, () => {
+      const translation = loadLocale(filename).translation as Record<
+        string,
+        string
+      >
+      for (const key of O021_PUBLIC_KEYS) {
+        assert.equal(
+          typeof translation[key],
+          'string',
+          `${filename}: missing ${key}`
+        )
+        assert.notEqual(translation[key], '', `${filename}: empty ${key}`)
+      }
+    })
+  }
 })

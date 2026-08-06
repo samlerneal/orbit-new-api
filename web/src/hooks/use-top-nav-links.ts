@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { useStatus } from '@/hooks/use-status'
 import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
+import { resolveSafePublicLink } from '@/lib/public-link'
 import { useAuthStore } from '@/stores/auth-store'
 
 export type TopNavLink = {
@@ -31,74 +32,80 @@ export type TopNavLink = {
   external?: boolean
 }
 
-/**
- * Generate top navigation links based on HeaderNavModules configuration from backend /api/status
- * Backend format example (stringified JSON):
- * {
- *   home: true,
- *   console: true,
- *   pricing: { enabled: true, requireAuth: false },
- *   rankings: { enabled: true, requireAuth: false },
- *   docs: true,
- *   about: true
- * }
- */
-export function useTopNavLinks(): TopNavLink[] {
+type TopNavLinkScope = 'default' | 'public'
+
+type UseTopNavLinksOptions = {
+  scope?: TopNavLinkScope
+}
+
+export function useTopNavLinks(
+  props: UseTopNavLinksOptions = {}
+): TopNavLink[] {
   const { t } = useTranslation()
   const { status } = useStatus()
   const { auth } = useAuthStore()
 
-  // Parse HeaderNavModules
+  const docsLink: string | undefined = status?.docs_link as string | undefined
+  const safeDocsLink = resolveSafePublicLink(docsLink)
+  const isAuthed = !!auth?.user
+
   const modules = useMemo(() => {
     return parseHeaderNavModulesFromStatus(
       status as Record<string, unknown> | null
     )
   }, [status])
 
-  // Documentation link (may be external)
-  const docsLink: string | undefined = status?.docs_link as string | undefined
-
-  const isAuthed = !!auth?.user
-
-  const links: TopNavLink[] = []
-
-  // Home
-  if (modules?.home !== false) {
-    links.push({ title: t('Home'), href: '/' })
-  }
-
-  // Console -> /dashboard (new console path)
-  if (modules?.console !== false) {
-    links.push({ title: t('Console'), href: '/dashboard' })
-  }
-
-  // Pricing
-  const pricing = modules?.pricing
-  if (pricing && typeof pricing === 'object' && pricing.enabled) {
-    const requiresAuth = pricing.requireAuth && !isAuthed
-    links.push({ title: t('Model Square'), href: '/pricing', requiresAuth })
-  }
-
-  // Rankings
-  const rankings = modules?.rankings
-  if (rankings && typeof rankings === 'object' && rankings.enabled) {
-    const requiresAuth = rankings.requireAuth && !isAuthed
-    links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
-  }
-
-  // Docs (supports external links)
-  if (modules?.docs !== false) {
-    if (docsLink) {
-      links.push({ title: t('Usage guide'), href: docsLink, external: true })
-    } else {
-      links.push({ title: t('Usage guide'), href: '/docs' })
+  return useMemo(() => {
+    if (props.scope === 'public') {
+      return [
+        { title: t('Console'), href: '/dashboard', requiresAuth: !isAuthed },
+        { title: t('Models'), href: '/pricing' },
+        {
+          title: t('Public tutorial'),
+          href: safeDocsLink || '/docs',
+          external: Boolean(
+            safeDocsLink?.startsWith('https:') ||
+            safeDocsLink?.startsWith('mailto:')
+          ),
+        },
+        { title: t('Chat'), href: '/playground', requiresAuth: !isAuthed },
+      ]
     }
-  }
 
-  // About
-  if (modules?.about !== false) {
-    links.push({ title: t('About'), href: '/about' })
-  }
-
-  return links
+    const links: TopNavLink[] = []
+    if (modules?.home !== false) links.push({ title: t('Home'), href: '/' })
+    if (modules?.console !== false) {
+      links.push({ title: t('Console'), href: '/dashboard' })
+    }
+    const pricing = modules?.pricing
+    if (pricing && typeof pricing === 'object' && pricing.enabled) {
+      links.push({
+        title: t('Model Square'),
+        href: '/pricing',
+        requiresAuth: pricing.requireAuth && !isAuthed,
+      })
+    }
+    const rankings = modules?.rankings
+    if (rankings && typeof rankings === 'object' && rankings.enabled) {
+      links.push({
+        title: t('Rankings'),
+        href: '/rankings',
+        requiresAuth: rankings.requireAuth && !isAuthed,
+      })
+    }
+    if (modules?.docs !== false) {
+      links.push({
+        title: t('Usage guide'),
+        href: safeDocsLink || '/docs',
+        external: Boolean(
+          safeDocsLink?.startsWith('https:') ||
+          safeDocsLink?.startsWith('mailto:')
+        ),
+      })
+    }
+    if (modules?.about !== false) {
+      links.push({ title: t('About'), href: '/about' })
+    }
+    return links
+  }, [isAuthed, modules, props.scope, safeDocsLink, t])
 }
