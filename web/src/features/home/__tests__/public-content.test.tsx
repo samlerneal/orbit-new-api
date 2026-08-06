@@ -15,9 +15,23 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { describe, test } from 'node:test'
 
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+
 import { hasCompletePublicHomeCatalog } from '../constants'
+
+// @ts-expect-error Bun provides mock.module at runtime.
+const { mock } = await import('bun:test')
+mock.module('react-i18next', () => ({
+  useTranslation: () => ({ t: (key: string) => key }),
+}))
+mock.module('@/lib/lobe-icon', () => ({
+  getLobeIcon: (name: string) => createElement('svg', { 'data-logo': name }),
+}))
+const { Features } = await import('../components/sections/features')
 
 describe('public Home catalog contract', () => {
   test('accepts the Owner-confirmed catalog sources', () => {
@@ -42,5 +56,46 @@ describe('public Home catalog contract', () => {
       }),
       false
     )
+  })
+
+  test('keeps catalog logos centered, descriptive, and non-interactive', () => {
+    const source = readFileSync(
+      new URL('../components/sections/features.tsx', import.meta.url),
+      'utf8'
+    )
+    assert.match(source, /items-center/)
+    assert.match(source, /justify-center/)
+    assert.match(source, /cursor-default/)
+    assert.match(source, /aria-label=\{model\}/)
+    assert.match(source, /Public catalog planned/)
+    assert.doesNotMatch(source, /<button/)
+    assert.doesNotMatch(source, /<a /)
+    assert.doesNotMatch(source, /Coming soon/)
+    assert.doesNotMatch(source, /暂未开放/)
+  })
+
+  test('does not expose provider names as visible logo-chip text', () => {
+    const markup = renderToStaticMarkup(createElement(Features))
+    for (const model of ['GPT', 'Claude', 'Gemini', 'xAI']) {
+      assert.match(markup, new RegExp(`aria-label="${model}"`))
+      assert.match(markup, new RegExp(`title="${model}"`))
+      assert.doesNotMatch(markup, new RegExp(`>${model}<`))
+    }
+  })
+
+  test('keeps the three actions and safe tutorial entry in the public flow', () => {
+    const source = readFileSync(
+      new URL('../components/sections/how-it-works.tsx', import.meta.url),
+      'utf8'
+    )
+    for (const key of [
+      'Public step one description',
+      'Public step two description',
+      'Public step three description',
+    ]) {
+      assert.match(source, new RegExp(key))
+    }
+    assert.match(source, /status\?\.docs_link/)
+    assert.match(source, /resolveSafePublicLink/)
   })
 })

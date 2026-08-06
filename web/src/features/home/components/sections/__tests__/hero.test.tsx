@@ -22,8 +22,14 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 // @ts-expect-error Bun provides mock.module at runtime.
 const { mock } = await import('bun:test')
+let currentStatus: Record<string, unknown> | null = {
+  docs_link: 'https://docs.mydaily.info/api/cc-switch',
+}
 mock.module('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
+}))
+mock.module('@/hooks/use-status', () => ({
+  useStatus: () => ({ status: currentStatus }),
 }))
 mock.module('@tanstack/react-router', () => ({
   Link: (props: { children?: React.ReactNode }) =>
@@ -36,5 +42,23 @@ describe('public hero content', () => {
     const markup = renderToStaticMarkup(createElement(Hero))
     assert.match(markup, /Public hero title/)
     assert.match(markup, /Public open console/)
+  })
+
+  test('uses only the safe configured tutorial target', () => {
+    const markup = renderToStaticMarkup(createElement(Hero))
+    assert.match(markup, /href="https:\/\/docs\.mydaily\.info\/api\/cc-switch"/)
+    assert.doesNotMatch(markup, /href="\/docs"/)
+
+    currentStatus = { docs_link: 'javascript:alert(1)' }
+    const unsafeMarkup = renderToStaticMarkup(createElement(Hero))
+    assert.doesNotMatch(unsafeMarkup, /href=/)
+  })
+
+  test('uses a responsive description measure instead of a forced line break', async () => {
+    const source = await import('node:fs/promises').then(({ readFile }) =>
+      readFile(new URL('../hero.tsx', import.meta.url), 'utf8')
+    )
+    assert.match(source, /max-w-\[52rem\]/)
+    assert.doesNotMatch(source, /<br\s*\/?\s*>/)
   })
 })

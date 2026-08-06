@@ -40,22 +40,65 @@ const REQUIRED_PUBLIC_KEYS = [
   'Public CTA description',
   'Public CTA title',
   'Public catalog description',
+  'Public catalog planned',
   'Public catalog title',
+  'Public contact',
   'Public footer navigation',
   'Public hero description',
   'Public hero title',
+  'Public model pricing',
   'Public navigation',
   'Public open console',
+  'Public privacy policy',
   'Public step one',
+  'Public step one description',
   'Public step three',
+  'Public step three description',
   'Public step two',
+  'Public step two description',
   'Public steps description',
   'Public steps title',
+  'Public terms of service',
   'Public tutorial',
+  'Public usage tutorial',
   'Public view tutorial',
   'Under preparation',
   'Available now',
 ]
+const LOCKED_PUBLIC_LOCALE_VALUES: Record<string, Record<string, string>> = {
+  'zh.json': {
+    'Public catalog planned': '即将接入',
+    'Public privacy policy': '隐私政策',
+    'Public terms of service': '服务条款',
+    'Public model pricing': '模型价格',
+    'Public usage tutorial': '使用教程',
+    'Public contact': '联系我们',
+  },
+  'zh-TW.json': {
+    'Public catalog planned': '即將接入',
+    'Public privacy policy': '隱私政策',
+    'Public terms of service': '服務條款',
+    'Public model pricing': '模型價格',
+    'Public usage tutorial': '使用教學',
+    'Public contact': '聯絡我們',
+  },
+  'en.json': {
+    'Public catalog planned': 'Coming next',
+    'Public privacy policy': 'Privacy Policy',
+    'Public terms of service': 'Terms of Service',
+    'Public model pricing': 'Model Pricing',
+    'Public usage tutorial': 'Usage Tutorial',
+    'Public contact': 'Contact Us',
+  },
+  'ru.json': {
+    'Public catalog planned': 'Скоро подключим',
+    'Public privacy policy': 'Политика конфиденциальности',
+    'Public terms of service': 'Условия использования',
+    'Public model pricing': 'Цены на модели',
+    'Public usage tutorial': 'Руководство по использованию',
+    'Public contact': 'Связаться с нами',
+  },
+}
 const REQUIRED_CATALOG_LOGOS = ['OpenAI', 'Anthropic', 'Gemini', 'XAI']
 const LEGACY_NARRATIVE =
   /upstream services integrated|model billing support|enterprise-grade security|multi-region deployment|automatic load balancing/i
@@ -174,6 +217,13 @@ async function checkStaticContent(release: boolean): Promise<Finding[]> {
           findings.push({ id: 'LOCALE_NONEMPTY', path, summary: key })
         }
       }
+      for (const [key, expectedValue] of Object.entries(
+        LOCKED_PUBLIC_LOCALE_VALUES[localeFile] ?? {}
+      )) {
+        if (locale.translation?.[key] !== expectedValue) {
+          findings.push({ id: 'LOCALE_CONTRACT', path, summary: key })
+        }
+      }
     } catch {
       findings.push({
         id: 'LOCALE_PARSE',
@@ -238,6 +288,20 @@ async function checkStaticContent(release: boolean): Promise<Finding[]> {
       summary: 'missing catalog sources',
     })
   }
+  const headerSource = source.find(
+    ({ path }) => path === 'src/components/layout/components/public-header.tsx'
+  )?.content
+  if (
+    !headerSource?.includes("'日课 API'") ||
+    headerSource.includes('getPublicHostname') ||
+    !headerSource.includes("copyToClipboard('3184917639')")
+  ) {
+    findings.push({
+      id: 'HEADER_BRAND_OR_SUPPORT',
+      path: 'src/components/layout/components/public-header.tsx',
+      summary: 'brand or support popover contract is invalid',
+    })
+  }
   const featureSource = source.find(
     ({ path }) => path === 'src/features/home/components/sections/features.tsx'
   )?.content
@@ -249,6 +313,58 @@ async function checkStaticContent(release: boolean): Promise<Finding[]> {
       id: 'CATALOG_LOGOS',
       path: 'src/features/home/components/sections/features.tsx',
       summary: 'required provider logos are absent',
+    })
+  }
+  if (
+    !featureSource?.includes('justify-center') ||
+    !featureSource.includes('cursor-default') ||
+    !featureSource.includes('aria-label={model}') ||
+    featureSource.includes('<button') ||
+    featureSource.includes('<a ')
+  ) {
+    findings.push({
+      id: 'CATALOG_CHIP_INTERACTION',
+      path: 'src/features/home/components/sections/features.tsx',
+      summary: 'catalog logos must remain centered non-interactive chips',
+    })
+  }
+  const heroSource = source.find(
+    ({ path }) => path === 'src/features/home/components/sections/hero.tsx'
+  )?.content
+  if (
+    !heroSource?.includes('status?.docs_link') ||
+    !heroSource.includes('resolveSafePublicLink') ||
+    heroSource.includes("href='/docs'")
+  ) {
+    findings.push({
+      id: 'HERO_TUTORIAL_TARGET',
+      path: 'src/features/home/components/sections/hero.tsx',
+      summary: 'tutorial target must use the safe status SSOT',
+    })
+  }
+  const stepsSource = source.find(
+    ({ path }) =>
+      path === 'src/features/home/components/sections/how-it-works.tsx'
+  )?.content
+  if (
+    !stepsSource?.includes('status?.docs_link') ||
+    !stepsSource.includes('resolveSafePublicLink') ||
+    stepsSource.includes("href='/docs'")
+  ) {
+    findings.push({
+      id: 'STEPS_TUTORIAL_TARGET',
+      path: 'src/features/home/components/sections/how-it-works.tsx',
+      summary: 'steps tutorial must use the safe status SSOT',
+    })
+  }
+  if (
+    !featureSource?.includes("t('Public catalog planned')") ||
+    featureSource.includes("t('Coming soon')")
+  ) {
+    findings.push({
+      id: 'CATALOG_PLANNED_LABEL',
+      path: 'src/features/home/components/sections/features.tsx',
+      summary: 'planned catalog must use the public semantic key',
     })
   }
   if (release) {
@@ -269,17 +385,13 @@ async function checkStaticContent(release: boolean): Promise<Finding[]> {
       }
     }
     if (!contactTarget) {
-      const headerSource = source.find(
-        ({ path }) =>
-          path === 'src/components/layout/components/public-header.tsx'
-      )?.content
       const footerSource = source.find(
         ({ path }) => path === 'src/components/layout/components/footer.tsx'
       )?.content
       if (
         contactFallback !== '客服 QQ：3184917639' ||
         !headerSource?.includes('PUBLIC_CONTACT_FALLBACK_LABEL') ||
-        !headerSource?.includes('disabled: !contactTarget') ||
+        !headerSource?.includes("copyToClipboard('3184917639')") ||
         !footerSource?.includes('PUBLIC_CONTACT_FALLBACK_LABEL') ||
         !footerSource?.includes("aria-disabled='true'")
       ) {
@@ -323,9 +435,16 @@ async function checkStaticContent(release: boolean): Promise<Finding[]> {
     const footerSource = source.find(
       ({ path }) => path === 'src/components/layout/components/footer.tsx'
     )?.content
+    const requiredFooterKeys = [
+      'Public privacy policy',
+      'Public terms of service',
+      'Public model pricing',
+      'Public usage tutorial',
+      'Public contact',
+    ]
     if (
       !footerSource ||
-      !footerSource.includes("t('Under preparation')") ||
+      requiredFooterKeys.some((key) => !footerSource.includes(`'${key}'`)) ||
       footerSource.includes('PUBLIC_FILING_TEXT')
     ) {
       findings.push({

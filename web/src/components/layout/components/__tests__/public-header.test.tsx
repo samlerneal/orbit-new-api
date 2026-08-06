@@ -31,11 +31,17 @@ describe('public header contract', () => {
     assert.doesNotMatch(source, /Toggle navigation menu/)
   })
 
-  test('preserves Playground authentication redirect and contact fallback', () => {
+  test('preserves Playground authentication redirect and exposes support only in a copyable popover', () => {
     assert.match(source, /redirect: authPromptTarget\.href/)
-    assert.match(
-      source,
-      /contactTarget\s*\?\s*t\('Contact support'\)\s*:\s*PUBLIC_CONTACT_FALLBACK_LABEL/
-    )
+    assert.match(source, /<PublicSupportPopover \/>/)
+    assert.match(source, /<PublicSupportPopover mobile \/>/)
+    assert.match(source, /copyToClipboard\('3184917639'\)/)
+    assert.match(source, /PUBLIC_CONTACT_FALLBACK_LABEL/)
+    assert.doesNotMatch(source, /PUBLIC_CONTACT_TARGET/)
+  })
+
+  test('shows only the locked brand without a hostname', () => {
+    assert.match(source, /'日课 API'/)
+    assert.doesNotMatch(source, /getPublicHostname/)
   })
 })

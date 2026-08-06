@@ -124,24 +124,29 @@ export function Footer(props: FooterProps) {
               aria-disabled='true'
               className='text-muted-foreground/50 text-sm'
             >
-              {t('Privacy Policy')} ({t('Under preparation')})
+              {t('Public privacy policy')}
             </span>
             <span
               aria-disabled='true'
               className='text-muted-foreground/50 text-sm'
             >
-              {t('User Agreement')} ({t('Under preparation')})
+              {t('Public terms of service')}
             </span>
-            <PublicFooterLink label='Models' href='/pricing' />
-            <PublicFooterLink label='Public tutorial' href={tutorialTarget} />
+            <PublicFooterLink label='Public model pricing' href='/pricing' />
             <PublicFooterLink
-              label={
-                contactTarget
-                  ? 'Contact support'
-                  : PUBLIC_CONTACT_FALLBACK_LABEL
-              }
-              href={contactTarget}
+              label='Public usage tutorial'
+              href={tutorialTarget}
             />
+            {contactTarget ? (
+              <PublicFooterLink label='Public contact' href={contactTarget} />
+            ) : (
+              <span
+                aria-disabled='true'
+                className='text-muted-foreground/50 text-sm'
+              >
+                {t('Public contact')}: {PUBLIC_CONTACT_FALLBACK_LABEL}
+              </span>
+            )}
           </nav>
         </div>
         <div className='border-border/30 mt-10 flex flex-col gap-3 border-t pt-6 sm:flex-row sm:items-center sm:justify-between'>

@@ -48,37 +48,41 @@ export function Features() {
             {t('Public catalog description')}
           </p>
         </div>
-        <div className='grid gap-8 md:grid-cols-2'>
-          <div>
-            <h2 className='text-base font-semibold'>{t('Available now')}</h2>
+        <div className='mx-auto flex max-w-3xl flex-col items-center gap-8'>
+          <div className='text-center'>
+            <h3 className='text-base font-semibold'>{t('Available now')}</h3>
             <ul
               data-catalog-source={PUBLIC_HOME_CATALOG.availableSource}
-              className='mt-4 flex flex-wrap gap-3'
+              className='mt-4 flex flex-wrap justify-center gap-3'
             >
               {availableModels.map((model) => (
                 <li
                   key={model}
-                  className='bg-background flex items-center gap-2 rounded-lg border px-3 py-2'
+                  aria-label={model}
+                  title={model}
+                  className='bg-background flex cursor-default items-center gap-2 rounded-lg border px-3 py-2 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md'
                 >
                   {getLobeIcon(logoByModel[model as keyof typeof logoByModel])}
-                  {model}
                 </li>
               ))}
             </ul>
           </div>
-          <div>
-            <h2 className='text-base font-semibold'>{t('Coming soon')}</h2>
+          <div className='text-center'>
+            <h3 className='text-base font-semibold'>
+              {t('Public catalog planned')}
+            </h3>
             <ul
               data-catalog-source={PUBLIC_HOME_CATALOG.plannedSource}
-              className='mt-4 flex flex-wrap gap-3'
+              className='mt-4 flex flex-wrap justify-center gap-3'
             >
               {plannedModels.map((model) => (
                 <li
                   key={model}
-                  className='bg-background flex items-center gap-2 rounded-lg border px-3 py-2'
+                  aria-label={model}
+                  title={model}
+                  className='bg-background flex cursor-default items-center gap-2 rounded-lg border px-3 py-2 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md'
                 >
                   {getLobeIcon(logoByModel[model as keyof typeof logoByModel])}
-                  {model}
                 </li>
               ))}
             </ul>

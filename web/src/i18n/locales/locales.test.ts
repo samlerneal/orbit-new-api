@@ -70,21 +70,65 @@ const O021_PUBLIC_KEYS = [
   'Public CTA title',
   'Public catalog ready',
   'Public catalog description',
+  'Public catalog planned',
   'Public catalog title',
+  'Public contact',
   'Public footer navigation',
   'Public hero description',
   'Public hero title',
+  'Public model pricing',
   'Public navigation',
   'Public open console',
+  'Public privacy policy',
   'Public step one',
+  'Public step one description',
   'Public step three',
+  'Public step three description',
   'Public step two',
+  'Public step two description',
   'Public steps description',
   'Public steps title',
+  'Public terms of service',
   'Public tutorial',
+  'Public usage tutorial',
   'Public view tutorial',
   'Under preparation',
 ]
+
+const O021_LOCKED_PUBLIC_VALUES: Record<string, Record<string, string>> = {
+  'zh.json': {
+    'Public catalog planned': '即将接入',
+    'Public privacy policy': '隐私政策',
+    'Public terms of service': '服务条款',
+    'Public model pricing': '模型价格',
+    'Public usage tutorial': '使用教程',
+    'Public contact': '联系我们',
+  },
+  'zh-TW.json': {
+    'Public catalog planned': '即將接入',
+    'Public privacy policy': '隱私政策',
+    'Public terms of service': '服務條款',
+    'Public model pricing': '模型價格',
+    'Public usage tutorial': '使用教學',
+    'Public contact': '聯絡我們',
+  },
+  'en.json': {
+    'Public catalog planned': 'Coming next',
+    'Public privacy policy': 'Privacy Policy',
+    'Public terms of service': 'Terms of Service',
+    'Public model pricing': 'Model Pricing',
+    'Public usage tutorial': 'Usage Tutorial',
+    'Public contact': 'Contact Us',
+  },
+  'ru.json': {
+    'Public catalog planned': 'Скоро подключим',
+    'Public privacy policy': 'Политика конфиденциальности',
+    'Public terms of service': 'Условия использования',
+    'Public model pricing': 'Цены на модели',
+    'Public usage tutorial': 'Руководство по использованию',
+    'Public contact': 'Связаться с нами',
+  },
+}
 
 function loadO018CampaignKeys(): string[] {
   const keys = new Set<string>()
@@ -200,6 +244,20 @@ describe('O-021 public page locale completeness', () => {
           `${filename}: missing ${key}`
         )
         assert.notEqual(translation[key], '', `${filename}: empty ${key}`)
+      }
+    })
+  }
+
+  for (const [filename, expectedValues] of Object.entries(
+    O021_LOCKED_PUBLIC_VALUES
+  )) {
+    test(`${filename} matches the locked public labels`, () => {
+      const translation = loadLocale(filename).translation as Record<
+        string,
+        string
+      >
+      for (const [key, value] of Object.entries(expectedValues)) {
+        assert.equal(translation[key], value, `${filename}: incorrect ${key}`)
       }
     })
   }

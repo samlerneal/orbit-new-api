@@ -30,18 +30,36 @@ describe('public footer contract', () => {
     assert.match(source, /rel='noopener noreferrer'/)
   })
 
-  test('keeps legal links visibly unavailable and preserves AGPL attribution', () => {
+  test('keeps legal links visibly unavailable without preparation copy and preserves AGPL attribution', () => {
     assert.match(source, /aria-disabled='true'/)
-    assert.match(source, /Under preparation/)
+    assert.doesNotMatch(source, /Under preparation/)
     assert.match(source, /QuantumNous\/new-api/)
     assert.match(source, /Open source license/)
     assert.match(source, /Modified source/)
     assert.doesNotMatch(source, /PUBLIC_FILING_TEXT/)
   })
 
+  test('uses public-only labels for every locked footer destination', () => {
+    for (const key of [
+      'Public privacy policy',
+      'Public terms of service',
+      'Public model pricing',
+      'Public usage tutorial',
+      'Public contact',
+    ]) {
+      assert.match(source, new RegExp(key))
+    }
+    assert.doesNotMatch(source, /t\('Privacy Policy'\)/)
+    assert.doesNotMatch(source, /t\('User Agreement'\)/)
+  })
+
   test('renders the QQ fallback through the non-interactive branch', () => {
     assert.match(source, /PUBLIC_CONTACT_FALLBACK_LABEL/)
     assert.match(source, /if \(!props\.href\)/)
     assert.match(source, /aria-disabled='true'/)
+    assert.match(
+      source,
+      /t\('Public contact'\).*PUBLIC_CONTACT_FALLBACK_LABEL/s
+    )
   })
 })

@@ -19,16 +19,23 @@ import { ArrowRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { useStatus } from '@/hooks/use-status'
+import { resolveSafePublicLink } from '@/lib/public-link'
 
 export function Hero(_props: { isAuthenticated?: boolean }) {
   const { t } = useTranslation()
+  const { status } = useStatus()
+  const tutorialTarget = resolveSafePublicLink(
+    status?.docs_link as string | undefined
+  )
+
   return (
     <section className='px-6 py-24 md:py-32'>
-      <div className='mx-auto max-w-3xl text-center'>
+      <div className='mx-auto max-w-4xl text-center'>
         <h1 className='text-4xl font-semibold tracking-tight md:text-6xl'>
           {t('Public hero title')}
         </h1>
-        <p className='text-muted-foreground mt-6 text-lg leading-8'>
+        <p className='text-muted-foreground mx-auto mt-6 max-w-[52rem] text-lg leading-8'>
           {t('Public hero description')}
         </p>
         <div className='mt-8 flex flex-col justify-center gap-3 sm:flex-row'>
@@ -36,7 +43,24 @@ export function Hero(_props: { isAuthenticated?: boolean }) {
             {t('Public open console')}
             <ArrowRight className='ml-2 size-5' />
           </Button>
-          <Button size='lg' variant='outline' render={<a href='/docs' />}>
+          <Button
+            size='lg'
+            variant='outline'
+            disabled={!tutorialTarget}
+            render={
+              <a
+                href={tutorialTarget ?? undefined}
+                target={
+                  tutorialTarget?.startsWith('https:') ? '_blank' : undefined
+                }
+                rel={
+                  tutorialTarget?.startsWith('https:')
+                    ? 'noopener noreferrer'
+                    : undefined
+                }
+              />
+            }
+          >
             {t('Public view tutorial')}
           </Button>
         </div>

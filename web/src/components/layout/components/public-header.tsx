@@ -24,17 +24,17 @@ import { NotificationPopover } from '@/components/notification-popover'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { Button } from '@/components/ui/button'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useNotifications } from '@/hooks/use-notifications'
-import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
-import {
-  PUBLIC_CONTACT_FALLBACK_LABEL,
-  getPublicHostname,
-  PUBLIC_CONTACT_TARGET,
-  resolveSafePublicLink,
-} from '@/lib/public-link'
+import { PUBLIC_CONTACT_FALLBACK_LABEL } from '@/lib/public-link'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -106,41 +106,52 @@ function PublicNavItem(props: {
   )
 }
 
+function PublicSupportPopover(props: { mobile?: boolean }) {
+  const { t } = useTranslation()
+  const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
+  const triggerClassName = cn(
+    'shrink-0 rounded-lg px-3 py-1.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground',
+    props.mobile && 'px-3 text-sm'
+  )
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button type='button' className={triggerClassName}>
+            {t('Contact support')}
+          </button>
+        }
+      />
+      <PopoverContent className='w-60' align='end'>
+        <p className='font-medium'>{PUBLIC_CONTACT_FALLBACK_LABEL}</p>
+        <Button
+          size='sm'
+          variant='outline'
+          className='mt-2 w-full'
+          onClick={() => void copyToClipboard('3184917639')}
+        >
+          {copiedText === '3184917639' ? t('Copied') : t('Copy')}
+        </Button>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export function PublicHeader(props: PublicHeaderProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { auth } = useAuthStore()
-  const { status } = useStatus()
-  const {
-    systemName,
-    logo: systemLogo,
-    loading,
-    logoLoaded,
-  } = useSystemConfig()
+  const { logo: systemLogo, loading, logoLoaded } = useSystemConfig()
   const notifications = useNotifications()
   const pathname = useRouterState().location.pathname
   const dynamicLinks = useTopNavLinks({ scope: 'public' })
   const [authPromptTarget, setAuthPromptTarget] =
     useState<AuthPromptTarget | null>(null)
   const isAuthenticated = Boolean(auth.user)
-  const contactTarget = resolveSafePublicLink(PUBLIC_CONTACT_TARGET)
-  const publicLinks: TopNavLink[] = [
-    ...(dynamicLinks.length ? dynamicLinks : (props.navLinks ?? [])),
-    {
-      title: contactTarget
-        ? t('Contact support')
-        : PUBLIC_CONTACT_FALLBACK_LABEL,
-      href: contactTarget ?? '#',
-      disabled: !contactTarget,
-      external:
-        contactTarget?.startsWith('https:') ||
-        contactTarget?.startsWith('mailto:'),
-    },
-  ]
-  const displaySiteName = props.siteName || systemName
-  const displayHostname = getPublicHostname(
-    (status as { server_address?: unknown } | null)?.server_address
-  )
+  const publicLinks: TopNavLink[] = dynamicLinks.length
+    ? dynamicLinks
+    : (props.navLinks ?? [])
 
   useEffect(() => {
     if (!authPromptTarget) return
@@ -198,11 +209,7 @@ export function PublicHeader(props: PublicHeaderProps) {
                 )}
               </div>
               <span className='truncate text-sm font-semibold tracking-tight'>
-                {loading ? (
-                  <Skeleton className='h-4 w-16' />
-                ) : (
-                  `${displaySiteName} / ${displayHostname}`
-                )}
+                {loading ? <Skeleton className='h-4 w-16' /> : '日课 API'}
               </span>
             </Link>
             <nav
@@ -216,6 +223,7 @@ export function PublicHeader(props: PublicHeaderProps) {
                   onClick={handleNavLinkClick}
                 />
               ))}
+              <PublicSupportPopover />
             </nav>
             <div className='flex shrink-0 items-center gap-1'>
               {props.showNotifications !== false && (
@@ -262,6 +270,7 @@ export function PublicHeader(props: PublicHeaderProps) {
                 mobile
               />
             ))}
+            <PublicSupportPopover mobile />
           </nav>
         </div>
       </header>
