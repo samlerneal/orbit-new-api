@@ -20,6 +20,8 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
 import { PublicChatInput } from './components/input/public-chat-input'
+import { PublicChatSidebar } from './components/public-chat-sidebar'
+import { PublicChatWelcome } from './components/public-chat-welcome'
 import { createStreamRequestController } from './hooks/use-stream-request'
 
 // @ts-expect-error Bun provides mock.module at runtime.
@@ -32,6 +34,8 @@ type ElementNode = {
 
 const state: unknown[] = []
 let stateIndex = 0
+const refs: Array<{ current: unknown }> = []
+let refIndex = 0
 let chatHandlerOptions: {
   onMessageUpdate: (updater: (messages: unknown[]) => unknown[]) => void
 } | null = null
@@ -70,6 +74,11 @@ class FakeStreamSource {
 
 mock.module('react', () => ({
   useCallback: <T,>(callback: T) => callback,
+  useRef: <T,>(initialValue: T) => {
+    const index = refIndex++
+    refs[index] ??= { current: initialValue }
+    return refs[index] as { current: T }
+  },
   useState: <T,>(initialValue: T | (() => T)) => {
     const index = stateIndex++
     if (!(index in state)) {
@@ -100,6 +109,9 @@ mock.module('react/jsx-runtime', () => ({
 }))
 mock.module('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
+}))
+mock.module('@/hooks/use-system-config', () => ({
+  useSystemConfig: () => ({ logo: '/logo.svg', systemName: 'Mydaily API' }),
 }))
 mock.module('@/components/ai-elements/conversation', () => ({
   Conversation: () => null,
@@ -185,7 +197,46 @@ function findElement(
 
 function renderPublicChat() {
   stateIndex = 0
+  refIndex = 0
   return PublicChat()
+}
+
+function renderNestedComponent(page: unknown, componentName: string): unknown {
+  const findComponent = (node: unknown): ElementNode | undefined => {
+    if (!node || typeof node !== 'object') return undefined
+    const element = node as ElementNode
+    if (
+      typeof element.type === 'function' &&
+      element.type.name === componentName
+    ) {
+      return element
+    }
+    const children = element.props?.children
+    for (const child of Array.isArray(children) ? children : [children]) {
+      const found = findComponent(child)
+      if (found) return found
+    }
+    return undefined
+  }
+  const component = findComponent(page)
+  if (!component || typeof component.type !== 'function') {
+    assert.fail(`missing nested component ${componentName}`)
+  }
+  return component.type(component.props ?? {})
+}
+
+function findPublicChatInput(page: unknown) {
+  return findElement(
+    renderNestedComponent(page, 'PublicChatComposer'),
+    PublicChatInput
+  )
+}
+
+function findRenderedMessage(page: unknown) {
+  return findElement(
+    renderNestedComponent(page, 'PublicChatMessages'),
+    PlaygroundMessageContent
+  )
 }
 
 describe('public chat surface contract', () => {
@@ -194,7 +245,7 @@ describe('public chat surface contract', () => {
     sentMessages = []
     stopCalls = 0
     const page = renderPublicChat()
-    const input = findElement(page, PublicChatInput)
+    const input = findPublicChatInput(page)
     assert.ok(input?.props?.onSubmit)
     assert.ok(input?.props?.onStop)
     const onSubmit = input.props.onSubmit as (text: string) => void
@@ -216,7 +267,7 @@ describe('public chat surface contract', () => {
       { key: 'error', from: 'assistant', text: 'Request error occurred: safe' },
     ])
     page = renderPublicChat()
-    const errorMessage = findElement(page, PlaygroundMessageContent)
+    const errorMessage = findRenderedMessage(page)
     assert.equal(
       errorMessage?.props?.versionContent,
       'Request error occurred: safe'
@@ -230,7 +281,7 @@ describe('public chat surface contract', () => {
     streamController = null
     streamSource = null
     let page = renderPublicChat()
-    const input = findElement(page, PublicChatInput)
+    const input = findPublicChatInput(page)
     assert.ok(input?.props?.onSubmit)
     assert.ok(input?.props?.onStop)
 
@@ -250,7 +301,7 @@ describe('public chat surface contract', () => {
       (element.props?.message as { from?: string } | undefined)?.from ===
       'assistant'
     const assistantBeforeStop = findElement(
-      page,
+      renderNestedComponent(page, 'PublicChatMessages'),
       PlaygroundMessageContent,
       isAssistant
     )
@@ -268,10 +319,98 @@ describe('public chat surface contract', () => {
 
     page = renderPublicChat()
     const assistantAfterLateChunk = findElement(
-      page,
+      renderNestedComponent(page, 'PublicChatMessages'),
       PlaygroundMessageContent,
       isAssistant
     )
     assert.equal(assistantAfterLateChunk?.props?.versionContent, 'before stop')
+  })
+
+  test('creates unique conversations from one render and activates the latest', () => {
+    state.length = 0
+    refs.length = 0
+    let page = renderPublicChat()
+    let sidebar = findElement(page, PublicChatSidebar)
+    assert.equal((sidebar?.props?.sessions as unknown[] | undefined)?.length, 1)
+
+    const onCreateSession = sidebar?.props?.onCreateSession as () => void
+    onCreateSession()
+    onCreateSession()
+    page = renderPublicChat()
+    sidebar = findElement(page, PublicChatSidebar)
+    const sessions = sidebar?.props?.sessions as
+      | Array<{ id: string }>
+      | undefined
+    assert.deepEqual(
+      sessions?.map((session) => session.id),
+      ['chat-1', 'chat-2', 'chat-3']
+    )
+    assert.equal(sidebar?.props?.activeSessionId, 'chat-3')
+
+    const onSelectSession = sidebar?.props?.onSelectSession as (
+      sessionId: string
+    ) => void
+    onSelectSession('chat-1')
+    page = renderPublicChat()
+    sidebar = findElement(page, PublicChatSidebar)
+    assert.equal(sidebar?.props?.activeSessionId, 'chat-1')
+  })
+
+  test('fills a quick prompt without sending until the user submits', () => {
+    state.length = 0
+    refs.length = 0
+    sentMessages = []
+    let page = renderPublicChat()
+    const renderedWelcome = renderNestedComponent(page, 'PublicChatMessages')
+    const welcomeComponent = findElement(renderedWelcome, PublicChatWelcome)
+    assert.ok(welcomeComponent?.props?.onPromptSelect)
+
+    const onPromptSelect = welcomeComponent.props.onPromptSelect as (
+      prompt: string
+    ) => void
+    onPromptSelect('Please summarize this text:')
+    assert.equal(sentMessages.length, 0)
+
+    page = renderPublicChat()
+    const input = findPublicChatInput(page)
+    assert.equal(input?.props?.text, 'Please summarize this text:')
+    const onSubmit = input?.props?.onSubmit as (text: string) => void
+    onSubmit(input?.props?.text as string)
+    assert.equal(sentMessages.length, 1)
+  })
+
+  test('clears the composer draft when creating or switching conversations', () => {
+    state.length = 0
+    refs.length = 0
+    let page = renderPublicChat()
+    let input = findPublicChatInput(page)
+    const onTextChange = input?.props?.onTextChange as (text: string) => void
+    onTextChange('draft before create')
+
+    page = renderPublicChat()
+    input = findPublicChatInput(page)
+    assert.equal(input?.props?.text, 'draft before create')
+    let sidebar = findElement(page, PublicChatSidebar)
+    const onCreateSession = sidebar?.props?.onCreateSession as () => void
+    onCreateSession()
+
+    page = renderPublicChat()
+    input = findPublicChatInput(page)
+    assert.equal(input?.props?.text, '')
+    const onTextChangeAfterCreate = input?.props?.onTextChange as (
+      text: string
+    ) => void
+    onTextChangeAfterCreate('draft before switch')
+
+    page = renderPublicChat()
+    sidebar = findElement(page, PublicChatSidebar)
+    const onSelectSession = sidebar?.props?.onSelectSession as (
+      sessionId: string
+    ) => void
+    onSelectSession('chat-1')
+
+    page = renderPublicChat()
+    input = findPublicChatInput(page)
+    assert.equal(input?.props?.text, '')
   })
 })

@@ -95,9 +95,28 @@ const O021_PUBLIC_KEYS = [
   'Under preparation',
 ]
 
-const O029_PUBLIC_CHAT_KEYS = ['Start a conversation']
+const O029_PUBLIC_CHAT_KEYS = [
+  'Start a conversation',
+  'Public chat analyze data',
+  'Public chat analyze data prompt',
+  'Public chat billing reminder',
+  'Public chat conversations',
+  'Public chat explain code',
+  'Public chat explain code prompt',
+  'Public chat get suggestions',
+  'Public chat get suggestions prompt',
+  'Public chat new conversation',
+  'Public chat open conversations',
+  'Public chat stored in this browser tab',
+  'Public chat summarize text',
+  'Public chat summarize text prompt',
+  'Public chat welcome description',
+]
 const O029_ZH_VALUES: Record<string, string> = {
   'Start a conversation': '开始一场对话',
+  'Public chat billing reminder':
+    '开始对话前，请确认账户余额充足或已有有效订阅；实际用量按账户权威账本结算。',
+  'Public chat stored in this browser tab': '仅保存在当前标签页，刷新后清空',
 }
 
 const O021_LOCKED_PUBLIC_VALUES: Record<string, Record<string, string>> = {

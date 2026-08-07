@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { SendIcon, SquareIcon } from 'lucide-react'
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -27,20 +26,17 @@ import {
   PromptInputTextarea,
   type PromptInputMessage,
 } from '@/components/ai-elements/prompt-input'
-import { ModelSelector } from '@/components/model-group-selector'
 
 import { getSubmittableInputText } from '../../lib'
-import type { ModelOption } from '../../types'
 
 type PublicChatInputProps = {
   disabled?: boolean
   isGenerating: boolean
-  isModelLoading: boolean
-  modelValue: string
-  models: ModelOption[]
-  onModelChange: (value: string) => void
+  hasModels: boolean
   onStop: () => void
   onSubmit: (text: string) => void
+  onTextChange: (text: string) => void
+  text: string
 }
 
 // The R2 behavior test imports this pure predicate without mounting browser UI.
@@ -60,18 +56,16 @@ export function canSubmitPublicChatInput({
 export function PublicChatInput({
   disabled = false,
   isGenerating,
-  isModelLoading,
-  modelValue,
-  models,
-  onModelChange,
+  hasModels,
   onStop,
   onSubmit,
+  onTextChange,
+  text,
 }: PublicChatInputProps) {
   const { t } = useTranslation()
-  const [text, setText] = useState('')
   const canSubmit = canSubmitPublicChatInput({
     disabled,
-    hasModels: models.length > 0,
+    hasModels,
     text,
   })
 
@@ -80,7 +74,7 @@ export function PublicChatInput({
     if (!submittedText) return
 
     onSubmit(submittedText)
-    setText('')
+    onTextChange('')
   }
 
   return (
@@ -92,20 +86,12 @@ export function PublicChatInput({
         autoCorrect='off'
         className='min-h-24 px-4 pt-4 pb-3 leading-7 md:text-base'
         disabled={disabled || isGenerating}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => onTextChange(event.target.value)}
         placeholder={t('Ask anything')}
         spellCheck={false}
         value={text}
       />
-      <PromptInputFooter className='border-border/60 border-t px-3 py-2.5'>
-        <div aria-label={t('Model')} className='min-w-0' role='group'>
-          <ModelSelector
-            disabled={disabled || isGenerating || isModelLoading}
-            models={models}
-            onModelChange={onModelChange}
-            selectedModel={modelValue}
-          />
-        </div>
+      <PromptInputFooter className='border-border/60 justify-end border-t px-3 py-2.5'>
         {isGenerating ? (
           <PromptInputButton
             aria-label={t('Stop')}
