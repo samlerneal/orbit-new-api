@@ -155,6 +155,33 @@ var o023CanonicalSchemaTableDigests = map[string]string{
 	"wallet_consume_records":           "bda50caf3bc6c09550c6066f94600d2462260605ac2e730a7efc7dc3a661a6c4",
 }
 
+var o023ProductionLegacySchemaTableDigests = map[string]string{
+	"bonus_balances":                "d3692e7455b3f8bebf49b2a818eed0eca33dbbee98744a26016f363f757fa603",
+	"checkins":                      "1d5f2ebf9e095d9dfe968fc2fbd9aa5a6047660e62b663dbd2e8f18d5fdec95d",
+	"external_identity_claims":      "5940ee33bf18281d8b56134f1e1a247d1f404c1a7a70d34777f494b546840be7",
+	"logs":                          "eabddc78257afd9ef8b6aa736aa15545f700942af53e91f1e148520c28b90723",
+	"models":                        "15de2925bd1641604b7f2512e1bb9f0561d30df02b18f8f7f0444a3293535324",
+	"payment_campaign_claims":       "0f030e20c1c4cb3b325bd58649fcd1f25a3f8dcdf3f8989596e0b4f2f4dd0132",
+	"payment_campaign_participants": "f3ad0332a2853ad409f0b83cab7ced5ce97d187d014cb4e41c7f1baf47c7c8a6",
+	"payment_campaign_states":       "48490c468575153a913d95cf0aad727a94f062159366c771a6cf52bd0aa0bf3d",
+	"perf_metrics":                  "01b3c6703e7892265b78ba6c599cfd838976ed36ef1974c9eaac3725f38c57a6",
+	"quota_data":                    "c980d8e1d78b9139988596ed19cfffb291f9cef151ee805c57b39846ae3b9b9d",
+	"subscription_orders":           "1729f12c5d82e1a8255f1ff8bb6f97d583bd5214180bd2511c37ebb67c4bc299",
+	"subscription_plans":            "cda86d972c24408f73bfa190542e6355a59b172d48c9e30da1d72473d5b1957f",
+	"tokens":                        "c2eccacd44d3843d17c6c183cd03c8e3d5433941adab5eed772262d3a99a8742",
+	"top_ups":                       "8b2f702a97113832bec410dbe52bb4bbe61dc1f61fd7bbec96c9966a72e24937",
+	"two_fas":                       "b3977ad2280e9e6cba6d4b2e4bc47e48affd467bfdb9d8044694820263a9e3ee",
+	"user_oauth_bindings":           "1ac697ce7ed324940de5f2adbf54cf3658e00b7f86de830156227de375c84d31",
+	"user_subscriptions":            "5431e53a3d19a797f708aaefdb0a5851c1db0664027c16f816e500d1f87928d9",
+	"users":                         "5cf0ec4071792b4c5b386ea2a7fec3128a3c2a54505eb99e9c79bfc3036667b9",
+	"vendors":                       "da29983b6452d4187534dec755ea9ab8a11be19c2a0a35b2cd097689e61d3d39",
+}
+
+const (
+	o023SchemaLineageCanonical        = "canonical-v1"
+	o023SchemaLineageProductionLegacy = "production-legacy-v1"
+)
+
 func o023CanonicalSchemaManifest(prepared bool) o023SchemaManifestSummary {
 	tables := make(map[string]string, len(o023CanonicalSchemaTableDigests))
 	for table, digest := range o023CanonicalSchemaTableDigests {
@@ -174,6 +201,53 @@ func o023CanonicalSchemaManifest(prepared bool) o023SchemaManifestSummary {
 		TriggerDigest: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		ViewDigest:    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 	}
+}
+
+func o023ProductionLegacySchemaManifest(prepared bool) o023SchemaManifestSummary {
+	manifest := o023CanonicalSchemaManifest(false)
+	for table, digest := range o023ProductionLegacySchemaTableDigests {
+		manifest.TableDigests[table] = digest
+	}
+	manifest.Digest = "80b3cbc5ec7c494b6a4e6e652c4f56ba22681958aeb3a81494a8317d64712fc8"
+	manifest.IndexDigest = "962878426f797a39781d804bfb8b6d695b0d84c4e89e89b1b9b0096b013b7b03"
+	if prepared {
+		manifest.Digest = "5ff24a649e90401cdfa0b2d1da058e59497ae53dbe485bb3b22c2b1221eec5af"
+		manifest.TableDigests["top_ups"] = "e92bfe730aa6a3f2233fb78eafc5ae11d5211f16941b0d5ff00b562683f99960"
+		manifest.TableDigests["subscription_orders"] = "ce8d520a83510e56df28eb326ba1fc0be2a189d6f17f201cf8ad35ceec462af3"
+	}
+	return manifest
+}
+
+func o023SchemaLineage(actual o023SchemaManifestSummary, prepared bool) (string, bool) {
+	lineages := []struct {
+		name     string
+		manifest o023SchemaManifestSummary
+	}{
+		{name: o023SchemaLineageCanonical, manifest: o023CanonicalSchemaManifest(prepared)},
+		{name: o023SchemaLineageProductionLegacy, manifest: o023ProductionLegacySchemaManifest(prepared)},
+	}
+	for _, lineage := range lineages {
+		if o023SchemaManifestMatches(actual, lineage.manifest) {
+			return lineage.name, true
+		}
+	}
+	return "", false
+}
+
+func o023SchemaLineageFor(db *gorm.DB, prepared bool) (string, error) {
+	actual, err := o023SchemaManifestSummaryFor(db)
+	if err != nil {
+		return "", err
+	}
+	lineage, ok := o023SchemaLineage(actual, prepared)
+	if !ok {
+		return "", fmt.Errorf("%w: canonical schema manifest mismatch", ErrUnknownUserReference)
+	}
+	return lineage, nil
+}
+
+func o023PersistedSchemaValue(lineage, fingerprint string) string {
+	return strings.Join([]string{O023SchemaContractVersion, lineage, fingerprint}, "|")
 }
 
 func o023SchemaManifestMatches(actual, expected o023SchemaManifestSummary) bool {
@@ -247,7 +321,7 @@ const (
 	O023UserIDMigrationVersion   = "o023_user_id_migration_version"
 	O023SchemaHash               = "o023_schema_allowlist_hash"
 	O023InvariantHash            = "o023_invariant_hash"
-	O023SchemaContractVersion    = "o023-schema-v1"
+	O023SchemaContractVersion    = "o023-schema-v2"
 	O023InvariantContractVersion = "o023-invariant-v2"
 )
 
@@ -418,6 +492,10 @@ func PrepareO023Schema(db *gorm.DB) error {
 				_ = conn.Exec("ROLLBACK").Error
 			}
 		}()
+		lineage, err := o023SchemaLineageFor(conn, false)
+		if err != nil {
+			return err
+		}
 		for _, table := range []string{"top_ups", "subscription_orders"} {
 			exists, err := sqliteTableExists(conn, table)
 			if err != nil || !exists {
@@ -436,11 +514,18 @@ func PrepareO023Schema(db *gorm.DB) error {
 				}
 			}
 		}
+		preparedLineage, err := o023SchemaLineageFor(conn, true)
+		if err != nil {
+			return err
+		}
+		if preparedLineage != lineage {
+			return fmt.Errorf("%w: schema lineage changed during preparation", ErrMigrationVersionConflict)
+		}
 		hash, err := o023SchemaFingerprint(conn)
 		if err != nil {
 			return err
 		}
-		if err := conn.Exec("INSERT INTO options(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", O023SchemaHash, O023SchemaContractVersion+"|"+hash).Error; err != nil {
+		if err := conn.Exec("INSERT INTO options(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", O023SchemaHash, o023PersistedSchemaValue(lineage, hash)).Error; err != nil {
 			return err
 		}
 		if err := conn.Exec("COMMIT").Error; err != nil {
@@ -479,12 +564,9 @@ func AuditO023Schema(db *gorm.DB) error {
 	if topUpPrepared != subscriptionPrepared {
 		return fmt.Errorf("%w: partial Waffo schema preparation", ErrUnknownUserReference)
 	}
-	actual, err := o023SchemaManifestSummaryFor(db)
+	lineage, err := o023SchemaLineageFor(db, topUpPrepared)
 	if err != nil {
 		return err
-	}
-	if !o023SchemaManifestMatches(actual, o023CanonicalSchemaManifest(topUpPrepared)) {
-		return fmt.Errorf("%w: canonical schema manifest mismatch", ErrUnknownUserReference)
 	}
 	persisted, present, err := o023OptionValue(db, O023SchemaHash)
 	if err != nil {
@@ -501,7 +583,7 @@ func AuditO023Schema(db *gorm.DB) error {
 		if err != nil {
 			return err
 		}
-		if persisted != O023SchemaContractVersion+"|"+fingerprint {
+		if persisted != o023PersistedSchemaValue(lineage, fingerprint) {
 			return fmt.Errorf("%w: schema allowlist hash mismatch", ErrMigrationVersionConflict)
 		}
 	}
@@ -787,6 +869,10 @@ func o023ValidClaimKey(campaignID, packageID string, userID int, key string, cam
 func o023ValidEmailClaimKey(campaignID, packageID, emailHash, key string, campaign operation_setting.PaymentCampaign, known bool) bool {
 	base := fmt.Sprintf("%s:email:%s", campaignID, emailHash)
 	perPackage := fmt.Sprintf("%s:package:%s", base, packageID)
+	legacyPerPackage := fmt.Sprintf("%s:package:%s:email:%s", campaignID, packageID, emailHash)
+	if o023ValidSlotKey(legacyPerPackage, key) {
+		return true
+	}
 	if known && campaign.Eligibility == operation_setting.CampaignEligibilityPerPackage {
 		return o023ValidSlotKey(perPackage, key)
 	}
@@ -911,6 +997,120 @@ func rewriteO023JSON(raw string, mapping map[int]int) (string, bool, error) {
 	return string(encoded), true, err
 }
 
+var o023StructuredUserReferenceKeys = map[string]struct{}{
+	"admin_id":       {},
+	"confirmed_by":   {},
+	"inviter_id":     {},
+	"target_user_id": {},
+	"user_id":        {},
+}
+
+var o023UserActionsWithIDParam = map[string]struct{}{
+	"user.delete":        {},
+	"user.manage":        {},
+	"user.reset_passkey": {},
+	"user.update":        {},
+}
+
+var o023AuditRoutesWithUserIDParam = map[string]struct{}{
+	"/api/subscription/admin/users/:id/subscriptions":       {},
+	"/api/subscription/admin/users/:id/subscriptions/reset": {},
+	"/api/user/:id":                             {},
+	"/api/user/:id/2fa":                         {},
+	"/api/user/:id/bindings/:binding_type":      {},
+	"/api/user/:id/oauth/bindings/:provider_id": {},
+	"/api/user/:id/reset_passkey":               {},
+}
+
+func o023IsStructuredUserReferenceKey(key string) bool {
+	_, ok := o023StructuredUserReferenceKeys[strings.ToLower(key)]
+	return ok
+}
+
+func o023StructuredUserID(value any) (int, error) {
+	switch typed := value.(type) {
+	case float64:
+		if typed != float64(int(typed)) {
+			return 0, fmt.Errorf("non-integral structured user reference")
+		}
+		return int(typed), nil
+	case string:
+		parsed, err := strconv.Atoi(typed)
+		if err != nil {
+			return 0, fmt.Errorf("invalid structured user reference")
+		}
+		return parsed, nil
+	default:
+		return 0, fmt.Errorf("unsupported structured user reference type")
+	}
+}
+
+func o023ValidateMappedUserID(value any, mapping map[int]int) error {
+	id, err := o023StructuredUserID(value)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnknownUserReference, err)
+	}
+	if _, ok := mapping[id]; !ok {
+		return fmt.Errorf("%w: structured user reference=%d", ErrUnknownUserReference, id)
+	}
+	return nil
+}
+
+func o023RewriteMappedUserID(value any, mapping map[int]int) (any, bool) {
+	id, err := o023StructuredUserID(value)
+	if err != nil {
+		return value, false
+	}
+	next, ok := mapping[id]
+	if !ok {
+		return value, false
+	}
+	if _, wasString := value.(string); wasString {
+		return strconv.Itoa(next), true
+	}
+	return next, true
+}
+
+func o023UserActionIDParam(item map[string]any) (map[string]any, bool) {
+	action, ok := item["action"].(string)
+	if !ok {
+		return nil, false
+	}
+	if _, ok := o023UserActionsWithIDParam[action]; !ok {
+		return nil, false
+	}
+	params, ok := item["params"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if _, ok := params["id"]; !ok {
+		return nil, false
+	}
+	return params, true
+}
+
+func o023AuditRouteUserIDParam(item map[string]any) (map[string]any, bool) {
+	auditInfo, ok := item["audit_info"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	route, ok := auditInfo["route"].(string)
+	if !ok {
+		return nil, false
+	}
+	if _, ok := o023AuditRoutesWithUserIDParam[route]; !ok {
+		return nil, false
+	}
+	params, ok := auditInfo["params"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if _, ok := params["id"]; !ok {
+		return nil, false
+	}
+	return params, true
+}
+
 func validateO023JSONValue(value any, mapping map[int]int) error {
 	switch item := value.(type) {
 	case []any:
@@ -920,27 +1120,20 @@ func validateO023JSONValue(value any, mapping map[int]int) error {
 			}
 		}
 	case map[string]any:
+		if params, ok := o023UserActionIDParam(item); ok {
+			if err := o023ValidateMappedUserID(params["id"], mapping); err != nil {
+				return err
+			}
+		}
+		if params, ok := o023AuditRouteUserIDParam(item); ok {
+			if err := o023ValidateMappedUserID(params["id"], mapping); err != nil {
+				return err
+			}
+		}
 		for key, child := range item {
-			lower := strings.ToLower(key)
-			if lower == "user_id" || lower == "inviter_id" || lower == "confirmed_by" {
-				var oldID int
-				switch id := child.(type) {
-				case float64:
-					if id != float64(int(id)) {
-						return fmt.Errorf("%w: non-integral structured user reference", ErrUnknownUserReference)
-					}
-					oldID = int(id)
-				case string:
-					parsed, err := strconv.Atoi(id)
-					if err != nil {
-						return fmt.Errorf("%w: invalid structured user reference", ErrUnknownUserReference)
-					}
-					oldID = parsed
-				default:
-					return fmt.Errorf("%w: unsupported structured user reference type", ErrUnknownUserReference)
-				}
-				if _, ok := mapping[oldID]; !ok {
-					return fmt.Errorf("%w: structured user reference=%d", ErrUnknownUserReference, oldID)
+			if o023IsStructuredUserReferenceKey(key) {
+				if err := o023ValidateMappedUserID(child, mapping); err != nil {
+					return err
 				}
 			}
 			if err := validateO023JSONValue(child, mapping); err != nil {
@@ -959,22 +1152,23 @@ func rewriteO023JSONValue(value any, mapping map[int]int) bool {
 			changed = rewriteO023JSONValue(child, mapping) || changed
 		}
 	case map[string]any:
+		if params, ok := o023UserActionIDParam(item); ok {
+			if next, rewritten := o023RewriteMappedUserID(params["id"], mapping); rewritten {
+				params["id"] = next
+				changed = true
+			}
+		}
+		if params, ok := o023AuditRouteUserIDParam(item); ok {
+			if next, rewritten := o023RewriteMappedUserID(params["id"], mapping); rewritten {
+				params["id"] = next
+				changed = true
+			}
+		}
 		for key, child := range item {
-			lower := strings.ToLower(key)
-			if lower == "user_id" || lower == "inviter_id" || lower == "confirmed_by" {
-				switch id := child.(type) {
-				case float64:
-					if next, ok := mapping[int(id)]; ok {
-						item[key] = next
-						changed = true
-					}
-				case string:
-					if parsed, err := strconv.Atoi(id); err == nil {
-						if next, ok := mapping[parsed]; ok {
-							item[key] = strconv.Itoa(next)
-							changed = true
-						}
-					}
+			if o023IsStructuredUserReferenceKey(key) {
+				if next, rewritten := o023RewriteMappedUserID(child, mapping); rewritten {
+					item[key] = next
+					changed = true
 				}
 			}
 			changed = rewriteO023JSONValue(child, mapping) || changed
@@ -1116,35 +1310,12 @@ func verifyO023PostMigrationStructuredReferences(db *gorm.DB) error {
 }
 
 // verifyO023RawResiduals is intentionally independent from the equivalence
-// snapshot. It never rewrites values and therefore cannot hide a legacy ID by
-// applying the temporary mapping. Historical Waffo buyer snapshots are the
-// sole classified exception; their count/raw digest is checked separately in
-// the invariant snapshot.
+// snapshot. Direct user-reference columns and exact Redis namespaces are
+// checked as raw values. Structured JSON and campaign keys are checked by
+// verifyO023PostMigrationStructuredReferences using their explicit user-id
+// grammar; scanning every number in those payloads would misclassify unrelated
+// channel, token, quota, and slot identifiers as legacy user references.
 func verifyO023RawResiduals(db *gorm.DB, legacyIDs []int) error {
-	legacy := map[int]struct{}{}
-	for _, id := range legacyIDs {
-		legacy[id] = struct{}{}
-	}
-	checkRaw := func(location, raw string) error {
-		for id := range legacy {
-			digits := strconv.Itoa(id)
-			for offset := 0; offset < len(raw); {
-				index := strings.Index(raw[offset:], digits)
-				if index < 0 {
-					break
-				}
-				start := offset + index
-				end := start + len(digits)
-				leftDigit := start > 0 && raw[start-1] >= '0' && raw[start-1] <= '9'
-				rightDigit := end < len(raw) && raw[end] >= '0' && raw[end] <= '9'
-				if !leftDigit && !rightDigit {
-					return fmt.Errorf("%w: raw legacy ID at %s", ErrUnknownUserReference, location)
-				}
-				offset = end
-			}
-		}
-		return nil
-	}
 	for table, columns := range o023DirectUserReferences {
 		exists, err := sqliteTableExists(db, table)
 		if err != nil || !exists {
@@ -1174,65 +1345,6 @@ func verifyO023RawResiduals(db *gorm.DB, legacyIDs []int) error {
 	}
 	if err := verifyO023PostMigrationStructuredReferences(db); err != nil {
 		return err
-	}
-	for table, columns := range o023StructuredColumns {
-		exists, err := sqliteTableExists(db, table)
-		if err != nil || !exists {
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		for _, column := range columns {
-			var values []string
-			if err := db.Table(table).Where("\""+column+"\" IS NOT NULL AND \""+column+"\" <> ''").Pluck(column, &values).Error; err != nil {
-				return err
-			}
-			for _, raw := range values {
-				if err := checkRaw(table+"."+column, raw); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	for _, table := range []string{"payment_campaign_claims", "payment_campaign_participants"} {
-		exists, err := sqliteTableExists(db, table)
-		if err != nil || !exists {
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		for _, column := range []string{"claim_key", "email_claim_key", "participant_key", "email_participant_key", "campaign_slot_key"} {
-			ok, err := sqliteColumnExists(db, table, column)
-			if err != nil || !ok {
-				if err != nil {
-					return err
-				}
-				continue
-			}
-			var values []string
-			if err := db.Table(table).Where("\""+column+"\" IS NOT NULL AND \""+column+"\" <> ''").Pluck(column, &values).Error; err != nil {
-				return err
-			}
-			for _, raw := range values {
-				if err := checkRaw(table+"."+column, raw); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	if exists, err := sqliteTableExists(db, "options"); err != nil {
-		return err
-	} else if exists {
-		var option Option
-		if err := db.Where("key = ?", "payment_setting.compliance_confirmed_by").First(&option).Error; err == nil {
-			if err := checkRaw("options.payment_setting.compliance_confirmed_by", option.Value); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
 	}
 	return verifyO023RawRedisResiduals(context.Background(), legacyIDs)
 }
@@ -1277,33 +1389,37 @@ func rejectO023LegacyJSONValue(value any) error {
 			}
 		}
 	case map[string]any:
+		if params, ok := o023UserActionIDParam(item); ok {
+			if err := rejectO023LegacyUserID(params["id"]); err != nil {
+				return err
+			}
+		}
+		if params, ok := o023AuditRouteUserIDParam(item); ok {
+			if err := rejectO023LegacyUserID(params["id"]); err != nil {
+				return err
+			}
+		}
 		for key, child := range item {
-			lower := strings.ToLower(key)
-			if lower == "user_id" || lower == "inviter_id" || lower == "confirmed_by" {
-				var id int
-				switch typed := child.(type) {
-				case float64:
-					if typed != float64(int(typed)) {
-						return fmt.Errorf("non-integral user reference")
-					}
-					id = int(typed)
-				case string:
-					parsed, err := strconv.Atoi(typed)
-					if err != nil {
-						return fmt.Errorf("invalid user reference")
-					}
-					id = parsed
-				default:
-					return fmt.Errorf("unsupported user reference type")
-				}
-				if int64(id) < int64(UserIDMin) || int64(id) > int64(UserIDMax) {
-					return fmt.Errorf("legacy user id %d", id)
+			if o023IsStructuredUserReferenceKey(key) {
+				if err := rejectO023LegacyUserID(child); err != nil {
+					return err
 				}
 			}
 			if err := rejectO023LegacyJSONValue(child); err != nil {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func rejectO023LegacyUserID(value any) error {
+	id, err := o023StructuredUserID(value)
+	if err != nil {
+		return err
+	}
+	if int64(id) < int64(UserIDMin) || int64(id) > int64(UserIDMax) {
+		return fmt.Errorf("legacy user id %d", id)
 	}
 	return nil
 }
@@ -1853,7 +1969,7 @@ func verifyO023BusinessAggregates(db *gorm.DB) error {
 	if exists, err := sqliteTableExists(db, "tokens"); err != nil {
 		return err
 	} else if exists {
-		if err := db.Table("tokens").Where("key IS NULL OR length(CAST(key AS BLOB)) = 0 OR remain_quota < 0 OR used_quota < 0").Count(&invalid).Error; err != nil {
+		if err := db.Table("tokens").Where("key IS NULL OR length(CAST(key AS BLOB)) = 0 OR (remain_quota < 0 AND unlimited_quota = 0) OR used_quota < 0").Count(&invalid).Error; err != nil {
 			return err
 		}
 		if invalid != 0 {
@@ -2131,6 +2247,10 @@ func migrateO023UserIDsOnConn(db *gorm.DB) (err error) {
 	if err := AuditO023Schema(db); err != nil {
 		return err
 	}
+	schemaLineage, err := o023SchemaLineageFor(db, true)
+	if err != nil {
+		return err
+	}
 	if exists, err := sqliteTableExists(db, "passkey_credentials"); err != nil {
 		return err
 	} else if exists {
@@ -2304,7 +2424,7 @@ func migrateO023UserIDsOnConn(db *gorm.DB) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := setO023Option(tx, O023SchemaHash, O023SchemaContractVersion+"|"+schemaHash); err != nil {
+	if err := setO023Option(tx, O023SchemaHash, o023PersistedSchemaValue(schemaLineage, schemaHash)); err != nil {
 		return err
 	}
 	if err := setO023Option(tx, O023UserIDMigrationVersion, strconv.Itoa(1)); err != nil {

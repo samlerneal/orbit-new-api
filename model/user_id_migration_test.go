@@ -2,12 +2,14 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
@@ -143,10 +145,142 @@ func TestAuditO023SchemaRejectsCanonicalObjectDrift(t *testing.T) {
 	}
 }
 
+func TestO023ProductionLegacySchemaLineageIsExact(t *testing.T) {
+	before := o023ProductionLegacySchemaManifest(false)
+	lineage, ok := o023SchemaLineage(before, false)
+	require.True(t, ok)
+	require.Equal(t, o023SchemaLineageProductionLegacy, lineage)
+	require.Equal(t, "80b3cbc5ec7c494b6a4e6e652c4f56ba22681958aeb3a81494a8317d64712fc8", before.Digest)
+	require.Equal(t, "962878426f797a39781d804bfb8b6d695b0d84c4e89e89b1b9b0096b013b7b03", before.IndexDigest)
+
+	after := o023ProductionLegacySchemaManifest(true)
+	lineage, ok = o023SchemaLineage(after, true)
+	require.True(t, ok)
+	require.Equal(t, o023SchemaLineageProductionLegacy, lineage)
+	require.Equal(t, "5ff24a649e90401cdfa0b2d1da058e59497ae53dbe485bb3b22c2b1221eec5af", after.Digest)
+	require.Equal(t, "e92bfe730aa6a3f2233fb78eafc5ae11d5211f16941b0d5ff00b562683f99960", after.TableDigests["top_ups"])
+	require.Equal(t, "ce8d520a83510e56df28eb326ba1fc0be2a189d6f17f201cf8ad35ceec462af3", after.TableDigests["subscription_orders"])
+}
+
+func TestO023EmailClaimKeyAcceptsOnlyExactHistoricalPackageGrammar(t *testing.T) {
+	campaign := operation_setting.PaymentCampaign{Eligibility: operation_setting.CampaignEligibilityPerPackage}
+	const campaignID = "launch-first-topup-30"
+	const packageID = "experience"
+	const emailHash = "synthetic-email-hash"
+
+	valid := campaignID + ":package:" + packageID + ":email:" + emailHash + ":slot:1"
+	assert.True(t, o023ValidEmailClaimKey(campaignID, packageID, emailHash, valid, campaign, true))
+	assert.False(t, o023ValidEmailClaimKey(campaignID, packageID, emailHash, campaignID+":package:standard:email:"+emailHash+":slot:1", campaign, true))
+	assert.False(t, o023ValidEmailClaimKey(campaignID, packageID, emailHash, campaignID+":package:"+packageID+":email:other-email:slot:1", campaign, true))
+	assert.False(t, o023ValidEmailClaimKey(campaignID, packageID, emailHash, campaignID+":package:"+packageID+":email:"+emailHash+":slot:0", campaign, true))
+	assert.False(t, o023ValidEmailClaimKey(campaignID, packageID, emailHash, campaignID+":package:"+packageID+":email:"+emailHash+":1", campaign, true))
+}
+
+func TestO023APIKeyInvariantPreservesHistoricalUnlimitedNegativeQuota(t *testing.T) {
+	db := newO023CanonicalSchemaFixture(t, "o023-unlimited-token-quota")
+	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password, quota, used_quota, request_count) VALUES (?, ?, ?, ?, ?, ?)`, 7, "unlimited-token-user", "password", 100, 0, 0).Error)
+	require.NoError(t, db.Exec(`INSERT INTO tokens (user_id, key, status, remain_quota, unlimited_quota, used_quota) VALUES (?, ?, ?, ?, ?, ?)`, 7, "historical-unlimited-token", common.TokenStatusEnabled, -1, true, 0).Error)
+	require.NoError(t, verifyO023BusinessAggregates(db))
+
+	require.NoError(t, db.Table("tokens").Where("key = ?", "historical-unlimited-token").Update("unlimited_quota", false).Error)
+	require.ErrorContains(t, verifyO023BusinessAggregates(db), "invalid API key summary rows: 1")
+
+	require.NoError(t, db.Table("tokens").Where("key = ?", "historical-unlimited-token").Updates(map[string]any{"unlimited_quota": true, "used_quota": -1}).Error)
+	require.ErrorContains(t, verifyO023BusinessAggregates(db), "invalid API key summary rows: 1")
+
+	require.NoError(t, db.Table("tokens").Where("key = ?", "historical-unlimited-token").Updates(map[string]any{"used_quota": 0, "key": ""}).Error)
+	require.ErrorContains(t, verifyO023BusinessAggregates(db), "invalid API key summary rows: 1")
+}
+
+func TestO023RawResidualsUseStructuredUserSemantics(t *testing.T) {
+	db := newO023CanonicalSchemaFixture(t, "o023-structured-residual-semantics")
+	previousRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedisEnabled })
+
+	const legacyID = 7
+	const migratedID = 123456789012
+	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password, quota, used_quota, request_count) VALUES (?, ?, ?, ?, ?, ?)`, migratedID, "structured-residual-user", "password", 100, 0, 0).Error)
+	require.NoError(t, db.Exec(`INSERT INTO logs (user_id, content, other) VALUES (?, ?, ?)`, migratedID, "structured residual", `{"user_id":123456789012,"channel_id":7,"token_id":7,"quota":7}`).Error)
+
+	campaignID := "launch-first-topup-30"
+	claimKey := campaignID + ":user:123456789012:package:experience:slot:7"
+	emailClaimKey := campaignID + ":package:experience:email:synthetic-email:slot:7"
+	campaignSlotKey := campaignID + ":campaign-slot:7"
+	require.NoError(t, db.Create(&PaymentCampaignClaim{CampaignId: campaignID, UserId: migratedID, PackageId: "experience", Status: CampaignClaimStatusAwarded, EmailHash: "synthetic-email", ClaimKey: &claimKey, EmailClaimKey: &emailClaimKey, CampaignSlotKey: &campaignSlotKey}).Error)
+
+	require.NoError(t, verifyO023RawResiduals(db, []int{legacyID}))
+
+	require.NoError(t, db.Table("logs").Where("content = ?", "structured residual").Update("other", `{"user_id":7,"channel_id":7,"token_id":7,"quota":7}`).Error)
+	require.ErrorContains(t, verifyO023RawResiduals(db, []int{legacyID}), "residual structured reference logs.other")
+}
+
+func TestO023StructuredAuditReferencesDistinguishUserAndResourceIDs(t *testing.T) {
+	const legacyID = 7
+	const migratedID = 123456789012
+	mapping := map[int]int{legacyID: migratedID}
+	raw := `{"admin_info":{"admin_id":7},"op":{"action":"user.update","params":{"id":7,"target_user_id":7,"channel_id":7}},"audit_info":{"route":"/api/user/:id/oauth/bindings/:provider_id","params":{"id":"7","provider_id":"7"},"request_id":7}}`
+
+	updated, changed, err := rewriteO023JSON(raw, mapping)
+	require.NoError(t, err)
+	require.True(t, changed)
+	var value map[string]any
+	require.NoError(t, json.Unmarshal([]byte(updated), &value))
+	adminInfo := value["admin_info"].(map[string]any)
+	require.EqualValues(t, migratedID, adminInfo["admin_id"])
+	op := value["op"].(map[string]any)
+	params := op["params"].(map[string]any)
+	require.EqualValues(t, migratedID, params["id"])
+	require.EqualValues(t, migratedID, params["target_user_id"])
+	require.EqualValues(t, legacyID, params["channel_id"])
+	auditInfo := value["audit_info"].(map[string]any)
+	auditParams := auditInfo["params"].(map[string]any)
+	require.Equal(t, strconv.Itoa(migratedID), auditParams["id"])
+	require.Equal(t, strconv.Itoa(legacyID), auditParams["provider_id"])
+	require.EqualValues(t, legacyID, auditInfo["request_id"])
+	require.NoError(t, rejectO023LegacyJSONValue(value))
+
+	channelRaw := `{"op":{"action":"channel.update","params":{"id":7}}}`
+	channelUpdated, channelChanged, err := rewriteO023JSON(channelRaw, mapping)
+	require.NoError(t, err)
+	require.False(t, channelChanged)
+	require.JSONEq(t, channelRaw, channelUpdated)
+	require.NoError(t, rejectO023LegacyJSONValue(map[string]any{
+		"op": map[string]any{"action": "channel.update", "params": map[string]any{"id": float64(legacyID)}},
+	}))
+
+	require.Error(t, rejectO023LegacyJSONValue(map[string]any{
+		"op": map[string]any{"action": "user.delete", "params": map[string]any{"id": float64(legacyID)}},
+	}))
+}
+
+func TestO023SchemaLineagesRejectDriftAndPhaseSwitch(t *testing.T) {
+	productionBefore := o023ProductionLegacySchemaManifest(false)
+	_, ok := o023SchemaLineage(productionBefore, true)
+	require.False(t, ok, "an unprepared schema must not match a prepared lineage")
+
+	productionBefore.TableDigests["users"] = strings.Repeat("0", 64)
+	_, ok = o023SchemaLineage(productionBefore, false)
+	require.False(t, ok, "a single table digest change must invalidate the exact lineage")
+
+	canonical := o023CanonicalSchemaManifest(false)
+	lineage, ok := o023SchemaLineage(canonical, false)
+	require.True(t, ok)
+	require.Equal(t, o023SchemaLineageCanonical, lineage)
+	require.NotEqual(t,
+		o023PersistedSchemaValue(o023SchemaLineageCanonical, canonical.Digest),
+		o023PersistedSchemaValue(o023SchemaLineageProductionLegacy, canonical.Digest),
+		"persisted schema identity must bind the lineage",
+	)
+}
+
 func TestAuditO023SchemaHashDetectsDrift(t *testing.T) {
 	db := newO023CanonicalSchemaFixture(t, "o023-schema-hash")
 	require.NoError(t, PrepareO023Schema(db))
 	require.NoError(t, AuditO023Schema(db))
+	var persisted string
+	require.NoError(t, db.Model(&Option{}).Select("value").Where("key = ?", O023SchemaHash).Scan(&persisted).Error)
+	require.True(t, strings.HasPrefix(persisted, O023SchemaContractVersion+"|"+o023SchemaLineageCanonical+"|"))
 	require.NoError(t, db.Model(&Option{}).Where("key = ?", O023SchemaHash).Update("value", O023SchemaContractVersion+"|drifted").Error)
 	require.ErrorIs(t, AuditO023Schema(db), ErrMigrationVersionConflict)
 }
