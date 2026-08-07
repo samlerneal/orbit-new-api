@@ -37,6 +37,16 @@ func openDatabase(path string) (*gorm.DB, error) {
 	return db, nil
 }
 
+func runMigration(db *gorm.DB) error {
+	if err := common.InitRedisClient(); err != nil {
+		return err
+	}
+	if common.RDB != nil {
+		defer common.RDB.Close()
+	}
+	return model.MigrateO023UserIDs(db)
+}
+
 func main() {
 	dbPath := flag.String("db", "", "isolated SQLite database path")
 	flag.Parse()
@@ -52,7 +62,7 @@ func main() {
 		case "prepare-schema":
 			err = model.PrepareO023Schema(db)
 		case "migrate":
-			err = model.MigrateO023UserIDs(db)
+			err = runMigration(db)
 		case "verify":
 			var status string
 			status, err = model.O023MigrationStatus(db)
