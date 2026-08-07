@@ -11,13 +11,8 @@ import (
 
 func insertUserForPaymentGuardTest(t *testing.T, id int, quota int) {
 	t.Helper()
-	user := &User{
-		Id:       id,
-		Username: "payment_guard_user",
-		Status:   common.UserStatusEnabled,
-		Quota:    quota,
-	}
-	require.NoError(t, DB.Create(user).Error)
+	require.NoError(t, DB.Exec(`INSERT INTO users (id, username, password, status, quota) VALUES (?, ?, ?, ?, ?)`,
+		id, "payment_guard_user", "payment-guard-password", common.UserStatusEnabled, quota).Error)
 }
 
 func insertSubscriptionPlanForPaymentGuardTest(t *testing.T, id int) *SubscriptionPlan {

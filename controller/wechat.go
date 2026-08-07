@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -89,7 +88,12 @@ func WeChatAuth(c *gin.Context) {
 		}
 	} else {
 		if common.RegisterEnabled {
-			user.Username = "wechat_" + strconv.Itoa(model.GetMaxUserId()+1)
+			suffix, suffixErr := model.RandomUserNameSuffix()
+			if suffixErr != nil {
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": "生成用户标识失败"})
+				return
+			}
+			user.Username = "wechat_" + suffix
 			user.DisplayName = "WeChat User"
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled

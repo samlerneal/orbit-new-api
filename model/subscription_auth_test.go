@@ -85,6 +85,49 @@ func TestSubscriptionGroupTransitionsPreserveAuthVersionAndSessions(t *testing.T
 	assert.Equal(t, "default", cached.Group)
 }
 
+func TestBalanceSubscriptionOrderTradeNoDoesNotExposeUserID(t *testing.T) {
+	previousDB, previousLogDB := DB, LOG_DB
+	previousMainDatabaseType, previousLogDatabaseType := common.MainDatabaseType(), common.LogDatabaseType()
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	DB, LOG_DB = db, db
+	require.NoError(t, db.AutoMigrate(&User{}, &SubscriptionPlan{}, &UserSubscription{}, &SubscriptionOrder{}, &Log{}))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
+	t.Cleanup(func() {
+		DB, LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMainDatabaseType, previousLogDatabaseType)
+		_ = sqlDB.Close()
+	})
+	user := &User{
+		Username: "subscription-order-opaque",
+		Password: "unused-password-hash",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Quota:    0,
+	}
+	require.NoError(t, DB.Create(user).Error)
+	plan := &SubscriptionPlan{
+		Title:         "Opaque balance plan",
+		DurationUnit:  SubscriptionDurationMonth,
+		DurationValue: 1,
+		TotalAmount:   100,
+		PriceAmount:   0,
+		Enabled:       true,
+	}
+	require.NoError(t, DB.Create(plan).Error)
+
+	require.NoError(t, PurchaseSubscriptionWithBalance(user.Id, plan.Id))
+	var order SubscriptionOrder
+	require.NoError(t, DB.Where("user_id = ?", user.Id).Order("id desc").First(&order).Error)
+	assert.True(t, strings.HasPrefix(order.TradeNo, "SUB-BAL-"))
+	assert.NotContains(t, order.TradeNo, fmt.Sprintf("%d", user.Id))
+	assert.Len(t, strings.TrimPrefix(order.TradeNo, "SUB-BAL-"), 32)
+}
+
 func TestSubscriptionGroupCacheRefreshFailureDoesNotChangeCommittedResult(t *testing.T) {
 	previousDB, previousLogDB := DB, LOG_DB
 	previousMainDatabaseType, previousLogDatabaseType := common.MainDatabaseType(), common.LogDatabaseType()

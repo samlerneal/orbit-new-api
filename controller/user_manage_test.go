@@ -70,6 +70,13 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func insertManageUserFixture(t *testing.T, db *gorm.DB, id int, user *model.User) {
+	t.Helper()
+	user.Id = id
+	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password, role, status, "group", auth_version, quota, aff_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, user.Username, user.Password, user.Role, user.Status, user.Group, user.AuthVersion, user.Quota, user.AffCode).Error)
+}
+
 func TestBuildAdminUserListItemsKeepsBonusFieldsOutOfGenericUserJSON(t *testing.T) {
 	db := setupManageUserTestDB(t)
 	now := time.Now().Unix()
@@ -118,9 +125,8 @@ func TestAdminUserListAndSearchUseOneBonusSelectForAnyPageSize(t *testing.T) {
 						{Username: "query-user-one", AffCode: "query-user-one", Quota: 300},
 						{Username: "query-user-two", AffCode: "query-user-two", Quota: 400},
 					}
-					for i := range users {
-						require.NoError(t, db.Create(&users[i]).Error)
-					}
+					insertManageUserFixture(t, db, 1, &users[0])
+					insertManageUserFixture(t, db, 2, &users[1])
 					require.NoError(t, db.Create(&model.BonusBalance{
 						UserId: users[0].Id, CampaignId: "query-valid", TopUpId: 1,
 						Status: model.BonusBalanceStatusActive, AmountTotal: 100,

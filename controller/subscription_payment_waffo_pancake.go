@@ -13,7 +13,6 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
-	"github.com/thanhpk/randstr"
 )
 
 type SubscriptionWaffoPancakePayRequest struct {
@@ -77,17 +76,27 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 
 	// WAFFO_PANCAKE_SUB- prefix (vs. wallet's WAFFO_PANCAKE-) drives webhook
 	// dispatch in WaffoPancakeWebhook.
-	tradeNo := fmt.Sprintf("WAFFO_PANCAKE_SUB-%d-%d-%s", userId, time.Now().UnixMilli(), randstr.String(6))
+	tradeNo, err := service.NewWaffoTradeNo("WAFFO_PANCAKE_SUB-")
+	if err != nil {
+		common.ApiErrorMsg(c, "生成支付订单号失败")
+		return
+	}
+	buyerIdentity, err := service.NewWaffoBuyerIdentity("wb_sub_")
+	if err != nil {
+		common.ApiErrorMsg(c, "生成支付标识失败")
+		return
+	}
 
 	order := &model.SubscriptionOrder{
-		UserId:          userId,
-		PlanId:          plan.Id,
-		Money:           plan.PriceAmount,
-		TradeNo:         tradeNo,
-		PaymentMethod:   model.PaymentMethodWaffoPancake,
-		PaymentProvider: model.PaymentProviderWaffoPancake,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+		UserId:             userId,
+		PlanId:             plan.Id,
+		Money:              plan.PriceAmount,
+		TradeNo:            tradeNo,
+		PaymentMethod:      model.PaymentMethodWaffoPancake,
+		PaymentProvider:    model.PaymentProviderWaffoPancake,
+		CreateTime:         time.Now().Unix(),
+		Status:             common.TopUpStatusPending,
+		WaffoBuyerIdentity: buyerIdentity,
 	}
 	if err := order.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅订单创建失败 user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
@@ -98,7 +107,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 	expiresInSeconds := 45 * 60
 	session, err := service.CreateWaffoPancakeCheckoutSession(c.Request.Context(), &service.WaffoPancakeCreateSessionParams{
 		ProductID:     plan.WaffoPancakeProductId,
-		BuyerIdentity: service.WaffoPancakeBuyerIdentityFromUserID(user.Id),
+		BuyerIdentity: buyerIdentity,
 		PriceSnapshot: &service.WaffoPancakePriceSnapshot{
 			Amount:      decimal.NewFromFloat(plan.PriceAmount).StringFixed(2),
 			TaxCategory: "saas",

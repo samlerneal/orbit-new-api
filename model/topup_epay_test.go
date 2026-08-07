@@ -109,6 +109,18 @@ func TestCompleteEpayTopUpRejectsAmountOrPaymentMethodMismatch(t *testing.T) {
 	assert.Equal(t, common.TopUpStatusPending, updatedTopUp.Status)
 }
 
+func TestRedactLegacyUserTradeNosOnlyForOrdinaryUserResponses(t *testing.T) {
+	rows := []*TopUp{
+		{Id: 11, TradeNo: "USR123NOlegacy"},
+		{Id: 12, TradeNo: "WAFFO-123-1700000000-old"},
+		{Id: 13, TradeNo: "EPAY-opaque-value"},
+	}
+	redactLegacyUserTradeNos(rows, 123)
+	assert.Equal(t, "ORDER-11", rows[0].TradeNo)
+	assert.Equal(t, "ORDER-12", rows[1].TradeNo)
+	assert.Equal(t, "EPAY-opaque-value", rows[2].TradeNo)
+}
+
 type legacyRefundNoticeTopUp struct {
 	Id      int    `gorm:"primaryKey"`
 	UserId  int    `gorm:"index"`
