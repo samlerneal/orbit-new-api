@@ -74,6 +74,15 @@ describe('public Home catalog contract', () => {
     assert.doesNotMatch(source, /暂未开放/)
   })
 
+  test('keeps available and planned models in one centered horizontal row', () => {
+    const markup = renderToStaticMarkup(createElement(Features))
+
+    assert.match(markup, /data-catalog-layout="horizontal"/)
+    assert.match(markup, /w-max min-w-full items-center justify-center/)
+    assert.match(markup, /overflow-x-auto/)
+    assert.doesNotMatch(markup, /max-w-3xl flex-col/)
+  })
+
   test('does not expose provider names as visible logo-chip text', () => {
     const markup = renderToStaticMarkup(createElement(Features))
     for (const model of ['GPT', 'Claude', 'Gemini', 'xAI']) {

@@ -80,10 +80,7 @@ describe('top navigation scope contract', () => {
       links.map((link) => link.title),
       ['Console', 'Models', 'Public tutorial', 'Chat']
     )
-    assert.equal(
-      links.find((link) => link.title === 'Chat')?.href,
-      '/playground'
-    )
+    assert.equal(links.find((link) => link.title === 'Chat')?.href, '/chat')
     assert.equal(
       links.find((link) => link.title === 'Chat')?.requiresAuth,
       true

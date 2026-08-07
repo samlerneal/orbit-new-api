@@ -68,7 +68,7 @@ export function useTopNavLinks(
             safeDocsLink?.startsWith('mailto:')
           ),
         },
-        { title: t('Chat'), href: '/playground', requiresAuth: !isAuthed },
+        { title: t('Chat'), href: '/chat', requiresAuth: !isAuthed },
       ]
     }
 
