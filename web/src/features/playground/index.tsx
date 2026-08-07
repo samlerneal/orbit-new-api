@@ -25,6 +25,8 @@ import {
   usePlaygroundState,
 } from './hooks'
 
+export { PublicChat } from './public-chat'
+
 export function Playground() {
   const {
     config,

@@ -95,6 +95,11 @@ const O021_PUBLIC_KEYS = [
   'Under preparation',
 ]
 
+const O029_PUBLIC_CHAT_KEYS = ['Start a conversation']
+const O029_ZH_VALUES: Record<string, string> = {
+  'Start a conversation': '开始一场对话',
+}
+
 const O021_LOCKED_PUBLIC_VALUES: Record<string, Record<string, string>> = {
   'zh.json': {
     'Public catalog planned': '即将接入',
@@ -261,4 +266,33 @@ describe('O-021 public page locale completeness', () => {
       }
     })
   }
+})
+
+describe('O-029 public chat locale completeness', () => {
+  for (const filename of ['zh.json', 'zh-TW.json', 'en.json', 'ru.json']) {
+    test(`${filename} contains all public-chat keys`, () => {
+      const translation = loadLocale(filename).translation as Record<
+        string,
+        string
+      >
+      for (const key of O029_PUBLIC_CHAT_KEYS) {
+        assert.equal(
+          typeof translation[key],
+          'string',
+          `${filename}: missing ${key}`
+        )
+        assert.notEqual(translation[key], '', `${filename}: empty ${key}`)
+      }
+    })
+  }
+
+  test('zh.json uses the locked public-chat title', () => {
+    const translation = loadLocale('zh.json').translation as Record<
+      string,
+      string
+    >
+    for (const [key, value] of Object.entries(O029_ZH_VALUES)) {
+      assert.equal(translation[key], value, `zh.json: incorrect ${key}`)
+    }
+  })
 })
