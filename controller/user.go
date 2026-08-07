@@ -328,6 +328,7 @@ func Register(c *gin.Context) {
 
 type adminUserListItem struct {
 	*model.User
+	InternalId            int   `json:"internal_id"`
 	BonusQuota            int64 `json:"bonus_quota"`
 	BonusNearestExpiresAt int64 `json:"bonus_nearest_expires_at"`
 	TotalQuota            int64 `json:"total_quota"`
@@ -342,12 +343,27 @@ func buildAdminUserListItems(users []*model.User, now int64) ([]adminUserListIte
 	if err != nil {
 		return nil, err
 	}
+	type internalIDRow struct {
+		ID         int `gorm:"column:id"`
+		InternalID int `gorm:"column:internal_id"`
+	}
+	internalIDs := make(map[int]int, len(userIds))
+	if len(userIds) != 0 {
+		var rows []internalIDRow
+		if err := model.DB.Table("users").Select("id", "internal_id").Where("id IN ?", userIds).Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			internalIDs[row.ID] = row.InternalID
+		}
+	}
 
 	items := make([]adminUserListItem, 0, len(users))
 	for _, user := range users {
 		summary := summaries[user.Id]
 		items = append(items, adminUserListItem{
 			User:                  user,
+			InternalId:            internalIDs[user.Id],
 			BonusQuota:            summary.ActiveQuota,
 			BonusNearestExpiresAt: summary.NearestExpiresAt,
 			TotalQuota:            int64(user.Quota) + summary.ActiveQuota,

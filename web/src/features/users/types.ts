@@ -34,6 +34,9 @@ export type UserRole = z.infer<typeof userRoleSchema>
 
 export const userSchema = z.object({
   id: z.number(),
+  // Present on the paginated administrator list DTO only. Single-user and
+  // ordinary user responses deliberately omit the administrator-only value.
+  internal_id: z.number().optional(),
   username: z.string(),
   display_name: z.string(),
   password: z.string().optional(),
@@ -83,6 +86,7 @@ export interface ApiResponse<T = unknown> {
 
 export type UserSortBy =
   | 'id'
+  | 'internal_id'
   | 'username'
   | 'quota'
   | 'group'

@@ -69,17 +69,29 @@ export function useUsersColumns(): ColumnDef<User>[] {
       size: 40,
     },
     {
+      accessorKey: 'internal_id',
+      header: t('Internal ID'),
+      cell: ({ row }) => (
+        <TableId
+          value={row.getValue('internal_id') as number}
+          className='w-[72px] overflow-hidden text-sm text-ellipsis whitespace-nowrap'
+        />
+      ),
+      size: 96,
+      meta: { mobileOrder: 9 },
+    },
+    {
       accessorKey: 'id',
-      header: t('ID'),
+      header: t('User ID'),
       cell: ({ row }) => {
         return (
           <TableId
             value={row.getValue('id') as number}
-            className='w-[60px] text-sm'
+            className='w-[72px] overflow-hidden text-sm text-ellipsis whitespace-nowrap'
           />
         )
       },
-      size: 80,
+      size: 96,
       meta: { mobileOrder: 10 },
     },
     {

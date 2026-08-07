@@ -48,6 +48,7 @@ const route = getRouteApi('/_authenticated/users/')
 
 const USER_SORTABLE_COLUMNS = new Set<UserSortBy>([
   'id',
+  'internal_id',
   'username',
   'quota',
   'group',
@@ -57,6 +58,11 @@ const USER_SORTABLE_COLUMNS = new Set<UserSortBy>([
 
 function isDisabledUserRow(user: User) {
   return isUserDeleted(user) || user.status === USER_STATUS.DISABLED
+}
+
+function getDisabledUserRowClass(user: User, isMobile: boolean) {
+  if (!isDisabledUserRow(user)) return undefined
+  return isMobile ? DISABLED_ROW_MOBILE : DISABLED_ROW_DESKTOP
 }
 
 export function UsersTable() {
@@ -232,11 +238,7 @@ export function UsersTable() {
         ],
       }}
       getRowClassName={(row, { isMobile }) =>
-        isDisabledUserRow(row.original)
-          ? isMobile
-            ? DISABLED_ROW_MOBILE
-            : DISABLED_ROW_DESKTOP
-          : undefined
+        getDisabledUserRowClass(row.original, isMobile)
       }
       bulkActions={<DataTableBulkActions table={table} />}
     />

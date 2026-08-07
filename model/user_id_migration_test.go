@@ -92,15 +92,15 @@ func TestO023StructuredScanErrorsFailClosed(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&User{}))
 	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password, setting) VALUES (?, ?, ?, ?)`, 7, "structured-user", "password", "not-json").Error)
 	require.NoError(t, db.Exec(`CREATE TEMP TABLE temp_o023_user_ids (old_id INTEGER PRIMARY KEY, new_id INTEGER NOT NULL UNIQUE)`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO temp_o023_user_ids(old_id, new_id) VALUES (?, ?)`, 7, UserIDMin).Error)
-	_, _, err = rewriteO023JSON("not-json", map[int]int{7: int(UserIDMin)})
+	require.NoError(t, db.Exec(`INSERT INTO temp_o023_user_ids(old_id, new_id) VALUES (?, ?)`, 7, O023UserIDMin).Error)
+	_, _, err = rewriteO023JSON("not-json", map[int]int{7: int(O023UserIDMin)})
 	assert.Error(t, err)
 	assert.ErrorIs(t, migrateO023StructuredReferences(db), ErrUnknownUserReference)
 }
 
 func TestO023RawResidualScanIsMappingFree(t *testing.T) {
 	db := newO023MigrationFixture(t, "o023-raw-residuals")
-	require.NoError(t, db.Exec("UPDATE users SET id = ?, setting = ?", UserIDMin, `{"user_id":7}`).Error)
+	require.NoError(t, db.Exec("UPDATE users SET id = ?, setting = ?", O023UserIDMin, `{"user_id":7}`).Error)
 	require.ErrorIs(t, verifyO023RawResiduals(db, []int{7}), ErrUnknownUserReference)
 }
 
@@ -328,7 +328,7 @@ func TestO023MigrationStatusRejectsPartialAndUnknownVersions(t *testing.T) {
 	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, ?)`, 7, "partial", "password").Error)
 	_, err = O023MigrationStatus(db)
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, ?)`, UserIDMin, "partial-new", "password").Error)
+	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, ?)`, O023UserIDMin, "partial-new", "password").Error)
 	_, err = O023MigrationStatus(db)
 	require.ErrorIs(t, err, ErrUnmarkedPartialMigration)
 	require.NoError(t, db.Create(&Option{Key: O023UserIDMigrationVersion, Value: "2"}).Error)
@@ -377,7 +377,7 @@ func TestMigrateO023SuccessRollbackRetryAndAlreadyMigrated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ALREADY_MIGRATED", status)
 	var migratedCount int64
-	require.NoError(t, db.Table("users").Where("id >= ? AND id <= ?", UserIDMin, UserIDMax).Count(&migratedCount).Error)
+	require.NoError(t, db.Table("users").Where("id >= ? AND id <= ?", O023UserIDMin, O023UserIDMax).Count(&migratedCount).Error)
 	assert.EqualValues(t, 1, migratedCount)
 	require.NoError(t, MigrateO023UserIDs(db))
 	var leaked int64
@@ -491,9 +491,9 @@ func runO023CompleteSyntheticRehearsal(t *testing.T, name string) {
 	common.RDB = redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { common.RedisEnabled, common.RDB = previousRedisEnabled, previousRDB })
 	userIDSourceMu.Lock()
-	previousUserIDSource := userIDSource
+	previousUserIDSource := o023UserIDSource
 	nextUserIDs := []int{113456789012, 213456789012, 123456789012, 223456789012}
-	userIDSource = func() (int, error) {
+	o023UserIDSource = func() (int, error) {
 		id := nextUserIDs[0]
 		nextUserIDs = nextUserIDs[1:]
 		return id, nil
@@ -501,7 +501,7 @@ func runO023CompleteSyntheticRehearsal(t *testing.T, name string) {
 	userIDSourceMu.Unlock()
 	t.Cleanup(func() {
 		userIDSourceMu.Lock()
-		userIDSource = previousUserIDSource
+		o023UserIDSource = previousUserIDSource
 		userIDSourceMu.Unlock()
 	})
 	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password, quota, used_quota, request_count, inviter_id, setting) VALUES (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)`, 7, "synthetic-a", "password", 100, 20, 3, 0, `{"user_id":7}`, 8, "synthetic-b", "password", 200, 30, 4, 7, `{"inviter_id":7}`).Error)

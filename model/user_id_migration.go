@@ -317,12 +317,14 @@ func o023SchemaManifestSummaryFor(db *gorm.DB) (o023SchemaManifestSummary, error
 }
 
 const (
-	O023WaffoSnapshotVersion     = "o023_waffo_snapshot_version"
-	O023UserIDMigrationVersion   = "o023_user_id_migration_version"
-	O023SchemaHash               = "o023_schema_allowlist_hash"
-	O023InvariantHash            = "o023_invariant_hash"
-	O023SchemaContractVersion    = "o023-schema-v2"
-	O023InvariantContractVersion = "o023-invariant-v2"
+	O023UserIDMin                int64 = 100000000000
+	O023UserIDMax                int64 = 999999999999
+	O023WaffoSnapshotVersion           = "o023_waffo_snapshot_version"
+	O023UserIDMigrationVersion         = "o023_user_id_migration_version"
+	O023SchemaHash                     = "o023_schema_allowlist_hash"
+	O023InvariantHash                  = "o023_invariant_hash"
+	O023SchemaContractVersion          = "o023-schema-v2"
+	O023InvariantContractVersion       = "o023-invariant-v2"
 )
 
 var (
@@ -419,7 +421,7 @@ func verifyO023RedisHasNoLegacyUserIDKeys(ctx context.Context) error {
 			continue
 		}
 		userID, parseErr := strconv.ParseInt(candidate, 10, 64)
-		if parseErr == nil && (userID < int64(UserIDMin) || userID > int64(UserIDMax)) {
+		if parseErr == nil && (userID < O023UserIDMin || userID > O023UserIDMax) {
 			return fmt.Errorf("%w: raw legacy Redis key", ErrUnknownUserReference)
 		}
 	}
@@ -617,7 +619,7 @@ func O023MigrationStatus(db *gorm.DB) (string, error) {
 	if err := db.Model(&User{}).Unscoped().Count(&total).Error; err != nil {
 		return "", err
 	}
-	if err := db.Model(&User{}).Unscoped().Where("id >= ? AND id <= ?", UserIDMin, UserIDMax).Count(&target).Error; err != nil {
+	if err := db.Model(&User{}).Unscoped().Where("id >= ? AND id <= ?", O023UserIDMin, O023UserIDMax).Count(&target).Error; err != nil {
 		return "", err
 	}
 	if present {
@@ -1179,7 +1181,7 @@ func rewriteO023JSONValue(value any, mapping map[int]int) bool {
 
 func VerifyO023Invariants(db *gorm.DB) error {
 	var invalid int64
-	if err := db.Model(&User{}).Unscoped().Where("id < ? OR id > ? OR id = 0", UserIDMin, UserIDMax).Count(&invalid).Error; err != nil {
+	if err := db.Model(&User{}).Unscoped().Where("id < ? OR id > ? OR id = 0", O023UserIDMin, O023UserIDMax).Count(&invalid).Error; err != nil {
 		return err
 	}
 	if invalid != 0 {
@@ -1225,7 +1227,7 @@ func verifyO023PostMigrationStructuredReferences(db *gorm.DB) error {
 		}
 		for _, row := range rows {
 			id, err := strconv.Atoi(strings.TrimPrefix(row.V0, "user:"))
-			if err != nil || int64(id) < int64(UserIDMin) || int64(id) > int64(UserIDMax) {
+			if err != nil || int64(id) < O023UserIDMin || int64(id) > O023UserIDMax {
 				return fmt.Errorf("%w: old Casbin user reference %q", ErrUnknownUserReference, row.V0)
 			}
 		}
@@ -1253,7 +1255,7 @@ func verifyO023PostMigrationStructuredReferences(db *gorm.DB) error {
 				for i := 0; i+1 < len(parts); i++ {
 					if parts[i] == "user" {
 						id, err := strconv.Atoi(parts[i+1])
-						if err != nil || int64(id) < int64(UserIDMin) || int64(id) > int64(UserIDMax) {
+						if err != nil || int64(id) < O023UserIDMin || int64(id) > O023UserIDMax {
 							return fmt.Errorf("%w: old activity user reference %q", ErrUnknownUserReference, value)
 						}
 					}
@@ -1268,7 +1270,7 @@ func verifyO023PostMigrationStructuredReferences(db *gorm.DB) error {
 		err := db.Where("key = ?", "payment_setting.compliance_confirmed_by").First(&option).Error
 		if err == nil {
 			id, parseErr := strconv.Atoi(strings.TrimSpace(option.Value))
-			if parseErr != nil || int64(id) < int64(UserIDMin) || int64(id) > int64(UserIDMax) {
+			if parseErr != nil || int64(id) < O023UserIDMin || int64(id) > O023UserIDMax {
 				return fmt.Errorf("%w: old compliance user reference", ErrUnknownUserReference)
 			}
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1337,7 +1339,7 @@ func verifyO023RawResiduals(db *gorm.DB, legacyIDs []int) error {
 				return err
 			}
 			for _, value := range values {
-				if int64(value) < int64(UserIDMin) || int64(value) > int64(UserIDMax) {
+				if int64(value) < O023UserIDMin || int64(value) > O023UserIDMax {
 					return fmt.Errorf("%w: raw legacy ID at %s.%s", ErrUnknownUserReference, table, column)
 				}
 			}
@@ -1418,7 +1420,7 @@ func rejectO023LegacyUserID(value any) error {
 	if err != nil {
 		return err
 	}
-	if int64(id) < int64(UserIDMin) || int64(id) > int64(UserIDMax) {
+	if int64(id) < O023UserIDMin || int64(id) > O023UserIDMax {
 		return fmt.Errorf("legacy user id %d", id)
 	}
 	return nil
@@ -2340,7 +2342,7 @@ func migrateO023UserIDsOnConn(db *gorm.DB) (err error) {
 	mapping := make(map[int]int, len(users))
 	for _, user := range users {
 		userIDs = append(userIDs, user.Id)
-		newID, err := randomUserID()
+		newID, err := randomO023UserID()
 		if err != nil {
 			return err
 		}

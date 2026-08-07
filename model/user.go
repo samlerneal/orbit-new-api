@@ -21,6 +21,7 @@ const UserNameMaxLength = 20
 
 var userSortColumns = map[string]string{
 	"id":            "id",
+	"internal_id":   "internal_id",
 	"username":      "username",
 	"quota":         "quota",
 	"group":         "group",
@@ -78,6 +79,7 @@ func resolveUserSortOptions(sortOptions []UserSortOptions) UserSortOptions {
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
 	Id               int                        `json:"id"`
+	InternalId       int                        `json:"-" gorm:"-:all"`
 	Username         string                     `json:"username" gorm:"unique;index" validate:"max=20"`
 	Password         string                     `json:"password" gorm:"not null;" validate:"min=8,max=20"`
 	OriginalPassword string                     `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
@@ -408,8 +410,8 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	keywordInt, err := strconv.Atoi(keyword)
 	if err == nil {
 		// 如果是数字，同时搜索ID和其他字段
-		likeCondition = "id = ? OR " + likeCondition
-		likeArgs = append([]interface{}{keywordInt}, likeArgs...)
+		likeCondition = "id = ? OR internal_id = ? OR " + likeCondition
+		likeArgs = append([]interface{}{keywordInt, keywordInt}, likeArgs...)
 	}
 
 	query = query.Where("("+likeCondition+")", likeArgs...)

@@ -35,6 +35,12 @@ func TestRandomUserIDContract(t *testing.T) {
 	}
 }
 
+func TestRandomUserIDRejectsOutOfRangeSource(t *testing.T) {
+	withTestUserIDSource(t, func() (int, error) { return 100000000000, nil })
+	_, err := randomUserID()
+	require.EqualError(t, err, "generated user id outside six-digit range: 100000000000")
+}
+
 func TestUserRejectsExplicitID(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:o023-user-id-explicit?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
@@ -60,7 +66,7 @@ func TestCreateUserWithRetryExhaustsAfterThirtyTwoPrimaryKeyCollisions(t *testin
 	require.NoError(t, db.AutoMigrate(&User{}))
 	DB = db
 	t.Cleanup(func() { DB = originalDB; common.SetMainDatabaseType(originalMain) })
-	const candidate = 123456789012
+	const candidate = 123456
 	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, ?)`, candidate, "occupied", "password").Error)
 	var calls atomic.Int32
 	withTestUserIDSource(t, func() (int, error) { calls.Add(1); return candidate, nil })
@@ -80,9 +86,9 @@ func TestCreateUserWithRetryDoesNotRetryOrdinaryUniqueConstraint(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&User{}))
 	DB = db
 	t.Cleanup(func() { DB = originalDB; common.SetMainDatabaseType(originalMain) })
-	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, ?)`, 123456789012, "duplicate", "password").Error)
+	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password) VALUES (?, ?, ?)`, 123456, "duplicate", "password").Error)
 	var calls atomic.Int32
-	withTestUserIDSource(t, func() (int, error) { calls.Add(1); return 123456789013, nil })
+	withTestUserIDSource(t, func() (int, error) { calls.Add(1); return 123457, nil })
 	err = CreateUserWithRetry(&User{Username: "duplicate", Password: "password"})
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrUserIDCollisionExhausted)

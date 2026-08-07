@@ -55,8 +55,12 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	model.DB, model.LOG_DB = db, db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{}, &model.UserSession{}, &model.Log{}, &model.CasbinRule{}, &model.AuthzRole{},
-		&model.BonusBalance{},
+		&model.BonusBalance{}, &model.Option{},
 	))
+	require.NoError(t, db.Exec(`ALTER TABLE users ADD COLUMN internal_id INTEGER NULL`).Error)
+	require.NoError(t, db.Exec(`CREATE UNIQUE INDEX idx_users_internal_id ON users(internal_id)`).Error)
+	require.NoError(t, db.Exec(`INSERT INTO options(key, value) VALUES (?, ?), (?, ?)`,
+		model.O031MigrationVersion, "1", model.O031CleanupState, model.O031CleanupClean).Error)
 
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = previousDB, previousLogDB
@@ -75,6 +79,7 @@ func insertManageUserFixture(t *testing.T, db *gorm.DB, id int, user *model.User
 	user.Id = id
 	require.NoError(t, db.Exec(`INSERT INTO users (id, username, password, role, status, "group", auth_version, quota, aff_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, user.Username, user.Password, user.Role, user.Status, user.Group, user.AuthVersion, user.Quota, user.AffCode).Error)
+	require.NoError(t, db.Exec(`UPDATE users SET internal_id = ? WHERE id = ?`, id, id).Error)
 }
 
 func TestBuildAdminUserListItemsKeepsBonusFieldsOutOfGenericUserJSON(t *testing.T) {
@@ -99,8 +104,10 @@ func TestBuildAdminUserListItemsKeepsBonusFieldsOutOfGenericUserJSON(t *testing.
 	assert.NotContains(t, string(genericJSON), "bonus_quota")
 	assert.NotContains(t, string(genericJSON), "bonus_nearest_expires_at")
 	assert.NotContains(t, string(genericJSON), "total_quota")
+	assert.NotContains(t, string(genericJSON), "internal_id")
 	adminJSON, err := json.Marshal(items[0])
 	require.NoError(t, err)
+	assert.Contains(t, string(adminJSON), `"internal_id":1`)
 	assert.Contains(t, string(adminJSON), `"bonus_quota":75`)
 	assert.Contains(t, string(adminJSON), `"total_quota":375`)
 }
@@ -164,7 +171,7 @@ func TestAdminUserListAndSearchUseOneBonusSelectForAnyPageSize(t *testing.T) {
 						assert.Contains(t, responseBody, fmt.Sprintf(`"bonus_nearest_expires_at":%d`, now+3600))
 						assert.Contains(t, responseBody, `"total_quota":375`)
 					}
-					assert.Equal(t, 3, counter.selectCount, "count, page, and one grouped bonus query expected")
+					assert.Equal(t, 4, counter.selectCount, "count, page, grouped bonus, and internal ID queries expected")
 				})
 			}
 		})
