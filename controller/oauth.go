@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -336,7 +335,11 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	}
 
 	// Set up new user
-	user.Username = provider.GetProviderPrefix() + strconv.Itoa(model.GetMaxUserId()+1)
+	suffix, err := model.RandomUserNameSuffix()
+	if err != nil {
+		return nil, err
+	}
+	user.Username = provider.GetProviderPrefix() + suffix
 
 	if oauthUser.Username != "" {
 		if exists, err := model.CheckUserExistOrDeleted(oauthUser.Username, ""); err == nil && !exists {

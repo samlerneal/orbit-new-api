@@ -17,6 +17,11 @@ import (
 	"gorm.io/gorm"
 )
 
+func insertAuthenticationUserFixture(t *testing.T, user User) {
+	t.Helper()
+	require.NoError(t, DB.Exec(`INSERT INTO users (id, username, password, telegram_id, auth_version, status) VALUES (?, ?, ?, ?, ?, ?)`, user.Id, user.Username, user.Password, user.TelegramId, user.AuthVersion, user.Status).Error)
+}
+
 func TestHardDeleteUserFailsClosedWhenAuthFenceCannotPublish(t *testing.T) {
 	truncateTables(t)
 
@@ -163,7 +168,7 @@ func TestValidateBackupCodeCanOnlySucceedOnce(t *testing.T) {
 
 	const code = "ABCD-1234"
 	user := User{Id: 123, Username: "backup-code-user", Password: "password", AuthVersion: 1}
-	require.NoError(t, DB.Create(&user).Error)
+	insertAuthenticationUserFixture(t, user)
 	require.NoError(t, DB.Create(&TwoFA{UserId: user.Id, Secret: "secret", IsEnabled: false}).Error)
 	require.NoError(t, CreatePendingTwoFASetupBackupCodes(user.Id, []string{code}))
 

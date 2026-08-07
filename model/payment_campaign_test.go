@@ -26,6 +26,13 @@ func useTestCampaign(t *testing.T, campaign operation_setting.PaymentCampaign) {
 	})
 }
 
+func insertPaymentCampaignUser(t *testing.T, id int, user User) {
+	t.Helper()
+	require.NoError(t, DB.Exec(`INSERT INTO users (id, username, password, email, aff_code, status) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, user.Username, "password", user.Email, user.AffCode, common.UserStatusEnabled).Error)
+	user.Id = id
+}
+
 func campaignTestRule(id string, total int) operation_setting.PaymentCampaign {
 	return operation_setting.PaymentCampaign{
 		ID:                   id,
@@ -219,8 +226,10 @@ func TestMigratePaymentCampaignParticipantsPreservesIdentityDeadlineAndIsIdempot
 		Email:    "reserved@example.com",
 		AffCode:  "migration-reserved",
 	}
-	require.NoError(t, DB.Create(&admittedUser).Error)
-	require.NoError(t, DB.Create(&reservedUser).Error)
+	insertPaymentCampaignUser(t, 1, admittedUser)
+	admittedUser.Id = 1
+	insertPaymentCampaignUser(t, 2, reservedUser)
+	reservedUser.Id = 2
 	admittedEmailHash := CampaignEmailHash(admittedUser.Email)
 	reservedEmailHash := CampaignEmailHash(reservedUser.Email)
 	claims := []PaymentCampaignClaim{
@@ -314,8 +323,10 @@ func TestMigratePerCampaignParticipantsAllowsSameEmailAcrossHistoricalPackages(t
 	now := common.GetTimestamp()
 	firstUser := User{Username: "migration-shared-email-a", Email: "migration-shared@example.com", AffCode: "migration-shared-email-a"}
 	secondUser := User{Username: "migration-shared-email-b", Email: "migration-shared@example.com", AffCode: "migration-shared-email-b"}
-	require.NoError(t, DB.Create(&firstUser).Error)
-	require.NoError(t, DB.Create(&secondUser).Error)
+	insertPaymentCampaignUser(t, 1, firstUser)
+	firstUser.Id = 1
+	insertPaymentCampaignUser(t, 2, secondUser)
+	secondUser.Id = 2
 	sharedHash := CampaignEmailHash(firstUser.Email)
 	claims := []PaymentCampaignClaim{
 		{CampaignId: campaign.ID, UserId: firstUser.Id, PackageId: "advanced", TopUpId: 3101, Status: CampaignClaimStatusAwarded, EmailHash: sharedHash, AwardedAt: now - 20, CreatedAt: now - 30},
@@ -350,8 +361,10 @@ func TestMigratePaymentCampaignParticipantsRollsBackOnFailure(t *testing.T) {
 		Email:    "migration-second@example.com",
 		AffCode:  "migration-second",
 	}
-	require.NoError(t, DB.Create(&firstUser).Error)
-	require.NoError(t, DB.Create(&secondUser).Error)
+	insertPaymentCampaignUser(t, 1, firstUser)
+	firstUser.Id = 1
+	insertPaymentCampaignUser(t, 2, secondUser)
+	secondUser.Id = 2
 	require.NoError(t, DB.Create(&[]PaymentCampaignClaim{
 		{
 			CampaignId: campaign.ID, UserId: firstUser.Id, PackageId: "experience",

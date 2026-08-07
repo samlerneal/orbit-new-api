@@ -224,7 +224,22 @@ type SubscriptionOrder struct {
 	CreateTime      int64  `json:"create_time"`
 	CompleteTime    int64  `json:"complete_time"`
 
-	ProviderPayload string `json:"provider_payload" gorm:"type:text"`
+	ProviderPayload    string `json:"provider_payload" gorm:"type:text"`
+	WaffoBuyerIdentity string `json:"-" gorm:"column:waffo_buyer_identity;type:varchar(128);-:migration"`
+}
+
+func (order *SubscriptionOrder) BeforeCreate(tx *gorm.DB) error {
+	if !tx.Migrator().HasColumn(&SubscriptionOrder{}, "waffo_buyer_identity") {
+		tx.Statement.Omit("WaffoBuyerIdentity")
+	}
+	return nil
+}
+
+func (order *SubscriptionOrder) BeforeUpdate(tx *gorm.DB) error {
+	if !tx.Migrator().HasColumn(&SubscriptionOrder{}, "waffo_buyer_identity") {
+		tx.Statement.Omit("WaffoBuyerIdentity")
+	}
+	return nil
 }
 
 func (o *SubscriptionOrder) Insert() error {
@@ -792,7 +807,10 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 		}
 
 		now := common.GetTimestamp()
-		tradeNo := fmt.Sprintf("SUBBALUSR%dNO%s%d", userId, common.GetRandomString(6), time.Now().UnixNano())
+		tradeNo, err := RandomOpaqueBusinessID("SUB-BAL-")
+		if err != nil {
+			return err
+		}
 		order := &SubscriptionOrder{
 			UserId:          userId,
 			PlanId:          plan.Id,

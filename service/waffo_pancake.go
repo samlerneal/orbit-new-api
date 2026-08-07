@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	pancake "github.com/waffo-com/waffo-pancake-sdk-go"
@@ -159,6 +162,35 @@ func WaffoPancakeBuyerIdentityFromUserID(userID int) string {
 	return fmt.Sprintf("new-api-user-%d", userID)
 }
 
+func NewWaffoBuyerIdentity(prefix string) (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := cryptorand.Read(bytes); err != nil {
+		return "", fmt.Errorf("generate Waffo buyer identity: %w", err)
+	}
+	return prefix + hex.EncodeToString(bytes), nil
+}
+
+func NewWaffoTradeNo(prefix string) (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := cryptorand.Read(bytes); err != nil {
+		return "", fmt.Errorf("generate Waffo trade number: %w", err)
+	}
+	return prefix + hex.EncodeToString(bytes), nil
+}
+
+func waffoSnapshotVersionState() (bool, error) {
+	common.OptionMapRWMutex.RLock()
+	defer common.OptionMapRWMutex.RUnlock()
+	value, present := common.OptionMap["o023_waffo_snapshot_version"]
+	if !present || value == "" {
+		return false, nil
+	}
+	if value != "1" {
+		return false, fmt.Errorf("unknown Waffo snapshot version %q", value)
+	}
+	return true, nil
+}
+
 // VerifyConfiguredWaffoPancakeWebhook verifies the signature header. The SDK
 // picks the matching test / prod public key from the payload's `mode` field.
 func VerifyConfiguredWaffoPancakeWebhook(payload string, signatureHeader string) (*WaffoPancakeWebhookEvent, error) {
@@ -208,7 +240,17 @@ func ResolveWaffoPancakeTradeNo(event *WaffoPancakeWebhookEvent) (string, error)
 	if topUp == nil || topUp.PaymentProvider != model.PaymentProviderWaffoPancake {
 		return "", fmt.Errorf("waffo pancake order not found for tradeNo=%s", tradeNo)
 	}
-	expectedIdentity := WaffoPancakeBuyerIdentityFromUserID(topUp.UserId)
+	strict, err := waffoSnapshotVersionState()
+	if err != nil {
+		return "", err
+	}
+	expectedIdentity := topUp.WaffoBuyerIdentity
+	if expectedIdentity == "" {
+		if strict {
+			return "", fmt.Errorf("waffo pancake buyer identity snapshot missing for tradeNo=%s", tradeNo)
+		}
+		expectedIdentity = WaffoPancakeBuyerIdentityFromUserID(topUp.UserId)
+	}
 	actualIdentity := strings.TrimSpace(event.Data.MerchantProvidedBuyerIdentity)
 	if actualIdentity != expectedIdentity {
 		return "", fmt.Errorf(
@@ -235,7 +277,17 @@ func ResolveWaffoPancakeSubscriptionTradeNo(event *WaffoPancakeWebhookEvent) (st
 	if order == nil || order.PaymentProvider != model.PaymentProviderWaffoPancake {
 		return "", fmt.Errorf("waffo pancake subscription order not found for tradeNo=%s", tradeNo)
 	}
-	expectedIdentity := WaffoPancakeBuyerIdentityFromUserID(order.UserId)
+	strict, err := waffoSnapshotVersionState()
+	if err != nil {
+		return "", err
+	}
+	expectedIdentity := order.WaffoBuyerIdentity
+	if expectedIdentity == "" {
+		if strict {
+			return "", fmt.Errorf("waffo pancake buyer identity snapshot missing for tradeNo=%s", tradeNo)
+		}
+		expectedIdentity = WaffoPancakeBuyerIdentityFromUserID(order.UserId)
+	}
 	actualIdentity := strings.TrimSpace(event.Data.MerchantProvidedBuyerIdentity)
 	if actualIdentity != expectedIdentity {
 		return "", fmt.Errorf(

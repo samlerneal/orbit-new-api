@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
@@ -31,6 +32,21 @@ type TopUp struct {
 	CreateTime             int64   `json:"create_time"`
 	CompleteTime           int64   `json:"complete_time"`
 	Status                 string  `json:"status"`
+	WaffoBuyerIdentity     string  `json:"-" gorm:"column:waffo_buyer_identity;type:varchar(128);-:migration"`
+}
+
+func (topUp *TopUp) BeforeCreate(tx *gorm.DB) error {
+	if !tx.Migrator().HasColumn(&TopUp{}, "waffo_buyer_identity") {
+		tx.Statement.Omit("WaffoBuyerIdentity")
+	}
+	return nil
+}
+
+func (topUp *TopUp) BeforeUpdate(tx *gorm.DB) error {
+	if !tx.Migrator().HasColumn(&TopUp{}, "waffo_buyer_identity") {
+		tx.Statement.Omit("WaffoBuyerIdentity")
+	}
+	return nil
 }
 
 const (
@@ -320,7 +336,21 @@ func GetUserTopUps(userId int, pageInfo *common.PageInfo) (topups []*TopUp, tota
 		return nil, 0, err
 	}
 
+	redactLegacyUserTradeNos(topups, userId)
 	return topups, total, nil
+}
+
+func redactLegacyUserTradeNos(topups []*TopUp, userID int) {
+	for _, topup := range topups {
+		if topup == nil {
+			continue
+		}
+		legacyUser := fmt.Sprintf("USR%dNO", userID)
+		legacyWaffo := fmt.Sprintf("WAFFO-%d-", userID)
+		if strings.Contains(topup.TradeNo, legacyUser) || strings.Contains(topup.TradeNo, legacyWaffo) {
+			topup.TradeNo = fmt.Sprintf("ORDER-%d", topup.Id)
+		}
+	}
 }
 
 func EnrichTopUpsWithBonusExpiry(topups []*TopUp) error {
@@ -429,6 +459,7 @@ func SearchUserTopUps(userId int, keyword string, pageInfo *common.PageInfo) (to
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
 	}
+	redactLegacyUserTradeNos(topups, userId)
 	return topups, total, nil
 }
 

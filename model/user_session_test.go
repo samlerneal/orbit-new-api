@@ -75,8 +75,13 @@ func createUserSessionTestUser(t *testing.T, userID int, authVersion int64) {
 		AffCode:     fmt.Sprintf("session-aff-%d", userID),
 		AuthVersion: authVersion,
 	}
-	require.NoError(t, DB.Create(&user).Error)
+	require.NoError(t, DB.Exec(`INSERT INTO users (id, username, password, status, role, "group", aff_code, auth_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, user.Id, user.Username, user.Password, user.Status, user.Role, user.Group, user.AffCode, user.AuthVersion).Error)
 	t.Cleanup(func() { _ = DB.Unscoped().Delete(&User{}, userID).Error })
+}
+
+func insertSessionUserFixture(t *testing.T, user User) {
+	t.Helper()
+	require.NoError(t, DB.Exec(`INSERT INTO users (id, username, password, auth_version) VALUES (?, ?, ?, ?)`, user.Id, user.Username, user.Password, user.AuthVersion).Error)
 }
 
 func newTestUserSession(sid string, userID int, now int64) *UserSession {
@@ -217,7 +222,7 @@ func TestUserSessionCreateListAndRevokeOne(t *testing.T) {
 	setupUserSessionTest(t)
 	now := time.Now().Unix()
 	user := User{Id: 1001, Username: "session-list-user", Password: "password", AuthVersion: 1}
-	require.NoError(t, DB.Create(&user).Error)
+	insertSessionUserFixture(t, user)
 	t.Cleanup(func() { _ = DB.Unscoped().Delete(&User{}, user.Id).Error })
 	first := newTestUserSession("session-one", 1001, now)
 	second := newTestUserSession("session-two", 1001, now+1)

@@ -77,8 +77,7 @@ func truncate(t *testing.T) {
 
 func seedUser(t *testing.T, id int, quota int) {
 	t.Helper()
-	user := &model.User{Id: id, Username: "test_user", Quota: quota, Status: common.UserStatusEnabled}
-	require.NoError(t, model.DB.Create(user).Error)
+	require.NoError(t, model.DB.Exec(`INSERT INTO users (id, username, password, quota, status) VALUES (?, ?, ?, ?, ?)`, id, "test_user", "password", quota, common.UserStatusEnabled).Error)
 }
 
 func seedToken(t *testing.T, id int, userId int, key string, remainQuota int) {

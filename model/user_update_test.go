@@ -27,6 +27,11 @@ func setupUserUpdateTestState(t *testing.T) {
 	})
 }
 
+func insertUserFixtureWithID(t *testing.T, user User) {
+	t.Helper()
+	require.NoError(t, DB.Exec(`INSERT INTO users (id, username, password, email, display_name, status, quota, used_quota, request_count, auth_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, user.Id, user.Username, user.Password, user.Email, user.DisplayName, user.Status, user.Quota, user.UsedQuota, user.RequestCount, user.AuthVersion).Error)
+}
+
 func TestUserUpdateDoesNotOverwriteAccountingFields(t *testing.T) {
 	setupUserUpdateTestState(t)
 
@@ -40,7 +45,7 @@ func TestUserUpdateDoesNotOverwriteAccountingFields(t *testing.T) {
 		UsedQuota:    20,
 		RequestCount: 3,
 	}
-	require.NoError(t, DB.Create(&user).Error)
+	insertUserFixtureWithID(t, user)
 
 	staleUser, err := GetUserById(user.Id, true)
 	require.NoError(t, err)
@@ -74,7 +79,7 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 		UsedQuota:    20,
 		RequestCount: 3,
 	}
-	require.NoError(t, DB.Create(&user).Error)
+	insertUserFixtureWithID(t, user)
 
 	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
 		"quota":         gorm.Expr("quota - ?", 250),

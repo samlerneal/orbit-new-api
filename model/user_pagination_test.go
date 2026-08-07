@@ -12,18 +12,10 @@ import (
 func insertUsersForPaginationTest(t *testing.T, total int) {
 	t.Helper()
 	for id := 1; id <= total; id++ {
-		user := &User{
-			Id:          id,
-			Username:    fmt.Sprintf("user%02d", id),
-			Password:    "password123",
-			DisplayName: fmt.Sprintf("User %02d", id),
-			Email:       fmt.Sprintf("user%02d@example.com", id),
-			Role:        common.RoleCommonUser,
-			Status:      common.UserStatusEnabled,
-			Group:       "default",
-			AffCode:     fmt.Sprintf("aff%02d", id),
-		}
-		require.NoError(t, DB.Create(user).Error)
+		require.NoError(t, DB.Exec(`INSERT INTO users (id, username, password, display_name, email, role, status, "group", aff_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, fmt.Sprintf("user%02d", id), "password123", fmt.Sprintf("User %02d", id),
+			fmt.Sprintf("user%02d@example.com", id), common.RoleCommonUser, common.UserStatusEnabled,
+			"default", fmt.Sprintf("aff%02d", id)).Error)
 	}
 }
 
