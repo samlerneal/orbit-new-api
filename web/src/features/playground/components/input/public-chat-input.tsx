@@ -26,8 +26,16 @@ import {
   PromptInputTextarea,
   type PromptInputMessage,
 } from '@/components/ai-elements/prompt-input'
+import { ModelGroupSelector } from '@/components/model-group-selector'
 
 import { getSubmittableInputText } from '../../lib'
+import type {
+  GroupOption,
+  ModelOption,
+  ParameterEnabled,
+  PlaygroundConfig,
+} from '../../types'
+import { PlaygroundParameterPanel } from './playground-parameter-panel'
 
 type PublicChatInputProps = {
   disabled?: boolean
@@ -37,6 +45,18 @@ type PublicChatInputProps = {
   onSubmit: (text: string) => void
   onTextChange: (text: string) => void
   text: string
+  config: PlaygroundConfig
+  groups: GroupOption[]
+  models: ModelOption[]
+  parameterEnabled: ParameterEnabled
+  onConfigChange: <K extends keyof PlaygroundConfig>(
+    key: K,
+    value: PlaygroundConfig[K]
+  ) => void
+  onParameterEnabledChange: (
+    key: keyof ParameterEnabled,
+    value: boolean
+  ) => void
 }
 
 // The R2 behavior test imports this pure predicate without mounting browser UI.
@@ -61,6 +81,12 @@ export function PublicChatInput({
   onSubmit,
   onTextChange,
   text,
+  config,
+  groups,
+  models,
+  parameterEnabled,
+  onConfigChange,
+  onParameterEnabledChange,
 }: PublicChatInputProps) {
   const { t } = useTranslation()
   const canSubmit = canSubmitPublicChatInput({
@@ -91,7 +117,25 @@ export function PublicChatInput({
         spellCheck={false}
         value={text}
       />
-      <PromptInputFooter className='border-border/60 justify-end border-t px-3 py-2.5'>
+      <PromptInputFooter className='border-border/60 justify-between gap-2 border-t px-3 py-2.5'>
+        <div className='flex min-w-0 items-center gap-2'>
+          <ModelGroupSelector
+            disabled={disabled || isGenerating}
+            groups={groups}
+            models={models}
+            onGroupChange={(group) => onConfigChange('group', group)}
+            onModelChange={(model) => onConfigChange('model', model)}
+            selectedGroup={config.group}
+            selectedModel={config.model}
+          />
+          <PlaygroundParameterPanel
+            config={config}
+            disabled={disabled || isGenerating}
+            onConfigChange={onConfigChange}
+            onParameterEnabledChange={onParameterEnabledChange}
+            parameterEnabled={parameterEnabled}
+          />
+        </div>
         {isGenerating ? (
           <PromptInputButton
             aria-label={t('Stop')}

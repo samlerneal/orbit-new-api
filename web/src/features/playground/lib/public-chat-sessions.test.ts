@@ -27,12 +27,28 @@ import {
 } from './public-chat-sessions'
 
 describe('public chat in-memory sessions', () => {
-  test('creates deterministic tab-local sessions without persisted data', () => {
-    assert.deepEqual(createPublicChatSession(2), {
-      id: 'chat-2',
-      title: null,
-      messages: [],
+  test('creates sessions with cryptographically random identifiers', () => {
+    const session = createPublicChatSession()
+    assert.ok(session)
+    assert.match(session.id, /^[a-f0-9]{32}$/)
+    assert.equal(session.title, null)
+  })
+
+  test('does not fall back to weak identifiers when crypto is unavailable', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto')
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: undefined,
     })
+    try {
+      assert.equal(createPublicChatSession(), null)
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(globalThis, 'crypto', descriptor)
+      } else {
+        delete (globalThis as { crypto?: Crypto }).crypto
+      }
+    }
   })
 
   test('normalizes and limits the first prompt used as a session title', () => {
@@ -47,19 +63,23 @@ describe('public chat in-memory sessions', () => {
   })
 
   test('updates only the selected session and preserves existing titles', () => {
-    const sessions = [createPublicChatSession(1), createPublicChatSession(2)]
+    const firstSession = createPublicChatSession()
+    const secondSession = createPublicChatSession()
+    assert.ok(firstSession)
+    assert.ok(secondSession)
+    const sessions = [firstSession, secondSession]
     const firstMessages = [
       { key: 'user-1', from: 'user' as const, versions: [] },
     ]
     const withFirstPrompt = setPublicChatSessionMessages(
       sessions,
-      'chat-2',
+      secondSession.id,
       firstMessages,
       'Analyze this report'
     )
     const withResponse = updatePublicChatSessionMessages(
       withFirstPrompt,
-      'chat-2',
+      secondSession.id,
       (messages) => [
         ...messages,
         { key: 'assistant-1', from: 'assistant' as const, versions: [] },

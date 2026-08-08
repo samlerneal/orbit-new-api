@@ -21,15 +21,26 @@ import type { Message } from '../types'
 export type PublicChatSession = {
   id: string
   title: string | null
+  created_at: number
+  updated_at: number
   messages: Message[]
 }
 
 const MAX_SESSION_TITLE_LENGTH = 28
 
-export function createPublicChatSession(ordinal: number): PublicChatSession {
+export function createPublicChatSession(): PublicChatSession | null {
+  const cryptoApi = globalThis.crypto
+  if (!cryptoApi?.getRandomValues) return null
+  const random = new Uint32Array(4)
+  cryptoApi.getRandomValues(random)
+  const now = Date.now()
   return {
-    id: `chat-${ordinal}`,
+    id: Array.from(random, (value) => value.toString(16).padStart(8, '0')).join(
+      ''
+    ),
     title: null,
+    created_at: now,
+    updated_at: now,
     messages: [],
   }
 }
@@ -52,6 +63,7 @@ export function updatePublicChatSessionMessages(
 
     return {
       ...session,
+      updated_at: Date.now(),
       messages: updater(session.messages),
     }
   })
@@ -68,6 +80,7 @@ export function setPublicChatSessionMessages(
 
     return {
       ...session,
+      updated_at: Date.now(),
       title: session.title ?? createPublicChatSessionTitle(firstPrompt),
       messages,
     }

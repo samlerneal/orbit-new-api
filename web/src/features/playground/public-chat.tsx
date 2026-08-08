@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { MenuIcon } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -26,7 +26,6 @@ import {
   ConversationScrollButton,
 } from '@/components/ai-elements/conversation'
 import { Message } from '@/components/ai-elements/message'
-import { ModelSelector } from '@/components/model-group-selector'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -36,24 +35,22 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { useSystemConfig } from '@/hooks/use-system-config'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { PublicChatInput } from './components/input/public-chat-input'
 import { PlaygroundMessageContent } from './components/message/playground-message-content'
 import { PublicChatSidebar } from './components/public-chat-sidebar'
 import { PublicChatWelcome } from './components/public-chat-welcome'
-import { DEFAULT_CONFIG, DEFAULT_PARAMETER_ENABLED } from './constants'
 import { useChatHandler, usePlaygroundOptions } from './hooks'
+import {
+  canMutatePublicChatSession,
+  usePublicChatState,
+} from './hooks/use-public-chat-state'
 import {
   appendUserMessagePair,
   getMessageAlignment,
   getMessageContent,
 } from './lib'
-import {
-  createPublicChatSession,
-  setPublicChatSessionMessages,
-  updatePublicChatSessionMessages,
-  type PublicChatSession,
-} from './lib/public-chat-sessions'
 import type {
   GroupOption,
   Message as ChatMessage,
@@ -62,12 +59,16 @@ import type {
 } from './types'
 
 type PublicChatToolbarProps = {
-  disabled: boolean
-  isModelLoading: boolean
-  models: ModelOption[]
-  modelValue: string
-  onModelChange: (model: string) => void
   onOpenSessions: () => void
+}
+
+function getPublicChatNoticeKey(
+  notice: 'limit' | 'reset' | 'trimmed' | 'unavailable'
+) {
+  if (notice === 'limit') return 'Public chat session limit'
+  if (notice === 'reset') return 'Public chat history reset'
+  if (notice === 'trimmed') return 'Public chat history trimmed'
+  return 'Public chat history unavailable'
 }
 
 function PublicChatToolbar(props: PublicChatToolbarProps) {
@@ -83,18 +84,7 @@ function PublicChatToolbar(props: PublicChatToolbarProps) {
       >
         <MenuIcon className='size-4' />
       </Button>
-      <div className='flex min-w-0 flex-1 items-center justify-between gap-3'>
-        <span className='text-muted-foreground hidden text-sm sm:block'>
-          {t('Model')}
-        </span>
-        <ModelSelector
-          className='ml-auto'
-          disabled={props.disabled || props.isModelLoading}
-          models={props.models}
-          onModelChange={props.onModelChange}
-          selectedModel={props.modelValue}
-        />
-      </div>
+      <div className='flex min-w-0 flex-1 items-center' />
     </div>
   )
 }
@@ -148,6 +138,18 @@ type PublicChatComposerProps = {
   onSubmit: (text: string) => void
   onTextChange: (text: string) => void
   text: string
+  config: PlaygroundConfig
+  groups: GroupOption[]
+  models: ModelOption[]
+  parameterEnabled: import('./types').ParameterEnabled
+  onConfigChange: <K extends keyof PlaygroundConfig>(
+    key: K,
+    value: PlaygroundConfig[K]
+  ) => void
+  onParameterEnabledChange: (
+    key: keyof import('./types').ParameterEnabled,
+    value: boolean
+  ) => void
 }
 
 function PublicChatComposer(props: PublicChatComposerProps) {
@@ -166,49 +168,80 @@ function PublicChatComposer(props: PublicChatComposerProps) {
           onSubmit={props.onSubmit}
           onTextChange={props.onTextChange}
           text={props.text}
+          config={props.config}
+          groups={props.groups}
+          models={props.models}
+          parameterEnabled={props.parameterEnabled}
+          onConfigChange={props.onConfigChange}
+          onParameterEnabledChange={props.onParameterEnabledChange}
         />
       </div>
     </div>
   )
 }
 
-export function PublicChat() {
+type PublicChatState = ReturnType<typeof usePublicChatState>
+
+type PublicChatReadyProps = {
+  state: PublicChatState
+}
+
+type PublicChatSubmitTurnArgs = {
+  activeSession: PublicChatState['activeSession']
+  sendChat: (messages: ChatMessage[]) => void
+  submitMessages: (messages: ChatMessage[], firstPrompt: string) => boolean
+  text: string
+}
+
+// The DOM test uses this exact transition so persistence cannot be tested as a
+// separate mock from the request that follows it.
+// eslint-disable-next-line react/only-export-components
+export function submitPublicChatTurn({
+  activeSession,
+  sendChat,
+  submitMessages,
+  text,
+}: PublicChatSubmitTurnArgs): boolean {
+  if (!activeSession) return false
+  const nextMessages = appendUserMessagePair(activeSession.messages, text)
+  if (!submitMessages(nextMessages, text)) return false
+  sendChat(nextMessages)
+  return true
+}
+
+// eslint-disable-next-line react/only-export-components
+export function runPublicChatSessionMutation(
+  isGenerating: boolean,
+  mutation: () => void
+): boolean {
+  if (!canMutatePublicChatSession(isGenerating)) return false
+  mutation()
+  return true
+}
+
+export function PublicChatReady(props: PublicChatReadyProps) {
   const { t } = useTranslation()
   const { logo, systemName } = useSystemConfig()
-  const [config, setConfig] = useState<PlaygroundConfig>(() => ({
-    ...DEFAULT_CONFIG,
-  }))
-  const [sessions, setSessions] = useState<PublicChatSession[]>(() => [
-    createPublicChatSession(1),
-  ])
-  const [activeSessionId, setActiveSessionId] = useState('chat-1')
-  const nextSessionOrdinal = useRef(2)
+  const {
+    activeSession,
+    activeSessionId,
+    clearSessions,
+    config,
+    createSession,
+    deleteSession,
+    notice,
+    parameterEnabled,
+    sessions,
+    setActiveSessionId,
+    submitMessages,
+    updateConfig,
+    updateMessages,
+    updateParameterEnabled,
+  } = props.state
   const [draftText, setDraftText] = useState('')
   const [models, setModels] = useState<ModelOption[]>([])
-  const [, setGroups] = useState<GroupOption[]>([])
+  const [groups, setGroups] = useState<GroupOption[]>([])
   const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false)
-  const activeSession =
-    sessions.find((session) => session.id === activeSessionId) ?? sessions[0]
-
-  const updateConfig = useCallback(
-    <K extends keyof PlaygroundConfig>(key: K, value: PlaygroundConfig[K]) => {
-      setConfig((currentConfig) => ({ ...currentConfig, [key]: value }))
-    },
-    []
-  )
-
-  const updateMessages = useCallback(
-    (updater: (currentMessages: ChatMessage[]) => ChatMessage[]) => {
-      setSessions((currentSessions) =>
-        updatePublicChatSessionMessages(
-          currentSessions,
-          activeSessionId,
-          updater
-        )
-      )
-    },
-    [activeSessionId]
-  )
 
   const { isLoadingModels } = usePlaygroundOptions({
     currentGroup: config.group,
@@ -219,35 +252,37 @@ export function PublicChat() {
   })
   const { sendChat, stopGeneration, isGenerating } = useChatHandler({
     config,
-    parameterEnabled: { ...DEFAULT_PARAMETER_ENABLED },
+    parameterEnabled,
     onMessageUpdate: updateMessages,
   })
+  const stopGenerationRef = useRef(stopGeneration)
+  stopGenerationRef.current = stopGeneration
+
+  useEffect(
+    () => () => {
+      stopGenerationRef.current()
+    },
+    []
+  )
 
   const handleSubmit = useCallback(
     (text: string) => {
-      const nextMessages = appendUserMessagePair(activeSession.messages, text)
-      setSessions((currentSessions) =>
-        setPublicChatSessionMessages(
-          currentSessions,
-          activeSessionId,
-          nextMessages,
-          text
-        )
-      )
-      sendChat(nextMessages)
+      submitPublicChatTurn({
+        activeSession,
+        sendChat,
+        submitMessages,
+        text,
+      })
     },
-    [activeSession.messages, activeSessionId, sendChat]
+    [activeSession, sendChat, submitMessages]
   )
 
   const handleCreateSession = useCallback(() => {
     if (isGenerating) return
-    const session = createPublicChatSession(nextSessionOrdinal.current)
-    nextSessionOrdinal.current += 1
-    setSessions((currentSessions) => [...currentSessions, session])
-    setActiveSessionId(session.id)
+    createSession()
     setDraftText('')
     setMobileSessionsOpen(false)
-  }, [isGenerating])
+  }, [createSession, isGenerating])
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
@@ -256,14 +291,22 @@ export function PublicChat() {
       setDraftText('')
       setMobileSessionsOpen(false)
     },
-    [isGenerating]
+    [isGenerating, setActiveSessionId]
   )
 
   const sidebar = (
     <PublicChatSidebar
       activeSessionId={activeSessionId}
       disabled={isGenerating}
+      onClearSessions={() => {
+        runPublicChatSessionMutation(isGenerating, clearSessions)
+      }}
       onCreateSession={handleCreateSession}
+      onDeleteSession={(sessionId) => {
+        runPublicChatSessionMutation(isGenerating, () =>
+          deleteSession(sessionId)
+        )
+      }}
       onSelectSession={handleSelectSession}
       sessions={sessions}
     />
@@ -275,18 +318,11 @@ export function PublicChat() {
         {sidebar}
       </aside>
       <main className='flex min-w-0 flex-1 flex-col overflow-hidden'>
-        <PublicChatToolbar
-          disabled={isGenerating}
-          isModelLoading={isLoadingModels}
-          modelValue={config.model}
-          models={models}
-          onModelChange={(model) => updateConfig('model', model)}
-          onOpenSessions={() => setMobileSessionsOpen(true)}
-        />
+        <PublicChatToolbar onOpenSessions={() => setMobileSessionsOpen(true)} />
         <PublicChatMessages
           disabled={isGenerating || isLoadingModels || models.length === 0}
           logo={logo || undefined}
-          messages={activeSession.messages}
+          messages={activeSession?.messages ?? []}
           onPromptSelect={setDraftText}
           systemName={systemName}
         />
@@ -298,6 +334,12 @@ export function PublicChat() {
           onSubmit={handleSubmit}
           onTextChange={setDraftText}
           text={draftText}
+          config={config}
+          groups={groups}
+          models={models}
+          parameterEnabled={parameterEnabled}
+          onConfigChange={updateConfig}
+          onParameterEnabledChange={updateParameterEnabled}
         />
       </main>
       <Sheet open={mobileSessionsOpen} onOpenChange={setMobileSessionsOpen}>
@@ -305,12 +347,36 @@ export function PublicChat() {
           <SheetHeader className='sr-only'>
             <SheetTitle>{t('Public chat conversations')}</SheetTitle>
             <SheetDescription>
-              {t('Public chat stored in this browser tab')}
+              {t('Public chat stored in this browser')}
             </SheetDescription>
           </SheetHeader>
           {sidebar}
         </SheetContent>
       </Sheet>
+      {notice && (
+        <div
+          className='bg-muted text-muted-foreground absolute right-3 bottom-3 max-w-[calc(100%-1.5rem)] rounded px-3 py-2 text-xs shadow'
+          role='status'
+        >
+          {t(getPublicChatNoticeKey(notice))}
+        </div>
+      )}
     </div>
   )
+}
+
+export function PublicChat() {
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const authReady = useAuthStore(
+    (state) => state.auth.bootstrapState === 'complete'
+  )
+  const publicChatState = usePublicChatState(userId, authReady)
+
+  if (!publicChatState.identityReady || userId === undefined) {
+    return (
+      <div className='flex h-[calc(100svh-7rem)] min-h-0 overflow-hidden md:h-[calc(100svh-5rem)]' />
+    )
+  }
+
+  return <PublicChatReady state={publicChatState} />
 }

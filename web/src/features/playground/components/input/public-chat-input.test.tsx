@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
+import { DEFAULT_CONFIG } from '../../constants'
+import { buildChatCompletionPayload } from '../../lib/streaming/payload-builder'
 import { canSubmitPublicChatInput } from './public-chat-input'
 
 describe('public chat input contract', () => {
@@ -58,5 +60,43 @@ describe('public chat input contract', () => {
       }),
       true
     )
+  })
+
+  test('passes only enabled parameters through the real chat payload builder', () => {
+    const config = {
+      ...DEFAULT_CONFIG,
+      model: 'allowed-model',
+      group: 'allowed-group',
+      temperature: 0.4,
+      top_p: 0.7,
+      max_tokens: 123,
+      frequency_penalty: 0.2,
+      presence_penalty: 0.3,
+      seed: 99,
+    }
+    const payload = buildChatCompletionPayload(
+      [
+        {
+          key: 'user',
+          from: 'user',
+          versions: [{ id: 'v', content: 'hello' }],
+        },
+      ],
+      config,
+      {
+        temperature: true,
+        top_p: false,
+        max_tokens: true,
+        frequency_penalty: false,
+        presence_penalty: false,
+        seed: true,
+      }
+    )
+    assert.equal(payload.temperature, 0.4)
+    assert.equal(payload.max_tokens, 123)
+    assert.equal(payload.seed, 99)
+    assert.equal('top_p' in payload, false)
+    assert.equal('frequency_penalty' in payload, false)
+    assert.equal('presence_penalty' in payload, false)
   })
 })

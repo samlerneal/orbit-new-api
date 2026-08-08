@@ -40,11 +40,27 @@ let chatHandlerOptions: {
   onMessageUpdate: (updater: (messages: unknown[]) => unknown[]) => void
 } | null = null
 let sentMessages: unknown[][] = []
+let submissionEvents: string[] = []
 let stopCalls = 0
 let streamController: ReturnType<typeof createStreamRequestController> | null =
   null
 let streamSource: FakeStreamSource | null = null
 const PlaygroundMessageContent = () => null
+let publicChatSessions: Array<Record<string, unknown>> = []
+let publicChatActiveSessionId = ''
+
+function resetPublicChatState() {
+  publicChatActiveSessionId = 'chat-1'
+  publicChatSessions = [
+    {
+      id: publicChatActiveSessionId,
+      title: null,
+      created_at: 1,
+      updated_at: 1,
+      messages: [],
+    },
+  ]
+}
 
 class FakeStreamSource {
   private listeners = new Map<
@@ -74,6 +90,8 @@ class FakeStreamSource {
 
 mock.module('react', () => ({
   useCallback: <T,>(callback: T) => callback,
+  useEffect: () => undefined,
+  useMemo: <T,>(factory: () => T) => factory(),
   useRef: <T,>(initialValue: T) => {
     const index = refIndex++
     refs[index] ??= { current: initialValue }
@@ -113,6 +131,9 @@ mock.module('react-i18next', () => ({
 mock.module('@/hooks/use-system-config', () => ({
   useSystemConfig: () => ({ logo: '/logo.svg', systemName: 'Mydaily API' }),
 }))
+mock.module('@/stores/auth-store', () => ({
+  useAuthStore: () => 123456,
+}))
 mock.module('@/components/ai-elements/conversation', () => ({
   Conversation: () => null,
   ConversationContent: () => null,
@@ -144,6 +165,7 @@ mock.module('./hooks', () => ({
     return {
       isGenerating: false,
       sendChat: (messages: unknown[]) => {
+        submissionEvents.push('sendChat')
         sentMessages.push(messages)
         void streamController?.send({} as never, {
           onUpdate: (_type, chunk) => {
@@ -167,6 +189,59 @@ mock.module('./hooks', () => ({
   },
   usePlaygroundOptions: () => ({ isLoadingModels: false }),
 }))
+function getPublicChatState() {
+  return {
+    activeSession: publicChatSessions.find(
+      (session) => session.id === publicChatActiveSessionId
+    ),
+    activeSessionId: publicChatActiveSessionId,
+    clearSessions: () => resetPublicChatState(),
+    config: { group: 'default', model: 'allowed-model', stream: true },
+    createSession: () => {
+      const session = {
+        id: `chat-${publicChatSessions.length + 1}`,
+        title: null,
+        created_at: 1,
+        updated_at: 1,
+        messages: [],
+      }
+      publicChatSessions = [...publicChatSessions, session]
+      publicChatActiveSessionId = session.id
+      return true
+    },
+    deleteSession: (sessionId: string) => {
+      publicChatSessions = publicChatSessions.filter(
+        (session) => session.id !== sessionId
+      )
+      publicChatActiveSessionId = publicChatSessions[0]?.id as string
+    },
+    identityReady: true,
+    notice: null,
+    parameterEnabled: {},
+    sessions: publicChatSessions,
+    setActiveSessionId: (sessionId: string) => {
+      publicChatActiveSessionId = sessionId
+    },
+    submitMessages: (messages: unknown[]) => {
+      submissionEvents.push('persist')
+      publicChatSessions = publicChatSessions.map((session) =>
+        session.id === publicChatActiveSessionId
+          ? { ...session, messages }
+          : session
+      )
+      return true
+    },
+    updateConfig: () => undefined,
+    updateMessages: (updater: (messages: unknown[]) => unknown[]) => {
+      publicChatSessions = publicChatSessions.map((session) =>
+        session.id === publicChatActiveSessionId
+          ? { ...session, messages: updater(session.messages as unknown[]) }
+          : session
+      )
+    },
+    updateParameterEnabled: () => undefined,
+  }
+}
 mock.module('./lib', () => ({
   appendUserMessagePair: (messages: unknown[], text: string) => [
     ...messages,
@@ -177,7 +252,7 @@ mock.module('./lib', () => ({
   getMessageContent: (message: { text: string }) => message.text,
 }))
 
-const { PublicChat } = await import('./public-chat')
+const { PublicChatReady } = await import('./public-chat')
 
 function findElement(
   node: unknown,
@@ -196,9 +271,12 @@ function findElement(
 }
 
 function renderPublicChat() {
+  if (state.length === 0) resetPublicChatState()
   stateIndex = 0
   refIndex = 0
-  return PublicChat()
+  return PublicChatReady({
+    state: getPublicChatState() as never,
+  })
 }
 
 function renderNestedComponent(page: unknown, componentName: string): unknown {
@@ -243,6 +321,7 @@ describe('public chat surface contract', () => {
   test('sends exactly one in-memory message pair and delegates stop', () => {
     state.length = 0
     sentMessages = []
+    submissionEvents = []
     stopCalls = 0
     const page = renderPublicChat()
     const input = findPublicChatInput(page)
@@ -254,6 +333,7 @@ describe('public chat surface contract', () => {
     onSubmit('hello')
     assert.equal(sentMessages.length, 1)
     assert.equal(sentMessages[0].length, 2)
+    assert.deepEqual(submissionEvents, ['persist', 'sendChat'])
 
     onStop()
     assert.equal(stopCalls, 1)
@@ -310,12 +390,12 @@ describe('public chat surface contract', () => {
     onStop()
     assert.equal(stopCalls, 1)
 
-    const messagesBeforeLateChunk = state[1]
+    const messagesBeforeLateChunk = publicChatSessions[0]?.messages
     activeStreamSource.emit(
       'message',
       JSON.stringify({ choices: [{ delta: { content: 'late overwrite' } }] })
     )
-    assert.equal(state[1], messagesBeforeLateChunk)
+    assert.equal(publicChatSessions[0]?.messages, messagesBeforeLateChunk)
 
     page = renderPublicChat()
     const assistantAfterLateChunk = findElement(
@@ -341,19 +421,17 @@ describe('public chat surface contract', () => {
     const sessions = sidebar?.props?.sessions as
       | Array<{ id: string }>
       | undefined
-    assert.deepEqual(
-      sessions?.map((session) => session.id),
-      ['chat-1', 'chat-2', 'chat-3']
-    )
-    assert.equal(sidebar?.props?.activeSessionId, 'chat-3')
+    assert.equal(sessions?.length, 3)
+    assert.notEqual(sessions?.[0]?.id, sessions?.[2]?.id)
+    assert.equal(sidebar?.props?.activeSessionId, sessions?.[2]?.id)
 
     const onSelectSession = sidebar?.props?.onSelectSession as (
       sessionId: string
     ) => void
-    onSelectSession('chat-1')
+    onSelectSession(sessions?.[0]?.id ?? '')
     page = renderPublicChat()
     sidebar = findElement(page, PublicChatSidebar)
-    assert.equal(sidebar?.props?.activeSessionId, 'chat-1')
+    assert.equal(sidebar?.props?.activeSessionId, sessions?.[0]?.id)
   })
 
   test('fills a quick prompt without sending until the user submits', () => {
