@@ -1,14 +1,219 @@
 package channel
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type formRequestTestAdaptor struct{ url string }
+
+func (a formRequestTestAdaptor) Init(*relaycommon.RelayInfo) {}
+func (a formRequestTestAdaptor) GetRequestURL(*relaycommon.RelayInfo) (string, error) {
+	return a.url, nil
+}
+func (a formRequestTestAdaptor) SetupRequestHeader(*gin.Context, *http.Header, *relaycommon.RelayInfo) error {
+	return nil
+}
+func (a formRequestTestAdaptor) ConvertOpenAIRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeneralOpenAIRequest) (any, error) {
+	return nil, nil
+}
+func (a formRequestTestAdaptor) ConvertRerankRequest(*gin.Context, int, dto.RerankRequest) (any, error) {
+	return nil, nil
+}
+func (a formRequestTestAdaptor) ConvertEmbeddingRequest(*gin.Context, *relaycommon.RelayInfo, dto.EmbeddingRequest) (any, error) {
+	return nil, nil
+}
+func (a formRequestTestAdaptor) ConvertAudioRequest(*gin.Context, *relaycommon.RelayInfo, dto.AudioRequest) (io.Reader, error) {
+	return nil, nil
+}
+func (a formRequestTestAdaptor) ConvertImageRequest(*gin.Context, *relaycommon.RelayInfo, dto.ImageRequest) (any, error) {
+	return nil, nil
+}
+func (a formRequestTestAdaptor) ConvertOpenAIResponsesRequest(*gin.Context, *relaycommon.RelayInfo, dto.OpenAIResponsesRequest) (any, error) {
+	return nil, nil
+}
+func (a formRequestTestAdaptor) DoRequest(*gin.Context, *relaycommon.RelayInfo, io.Reader) (any, error) {
+	return nil, nil
+}
+func (a formRequestTestAdaptor) DoResponse(*gin.Context, *http.Response, *relaycommon.RelayInfo) (any, *types.NewAPIError) {
+	return nil, nil
+}
+func (a formRequestTestAdaptor) GetModelList() []string { return nil }
+func (a formRequestTestAdaptor) GetChannelName() string { return "test" }
+func (a formRequestTestAdaptor) ConvertClaudeRequest(*gin.Context, *relaycommon.RelayInfo, *dto.ClaudeRequest) (any, error) {
+	return nil, nil
+}
+func (a formRequestTestAdaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {
+	return nil, nil
+}
+
+func TestDoFormRequestUsesMultipartAndRequestContext(t *testing.T) {
+	service.InitHttpClient()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		require.Contains(t, r.Header.Get("Content-Type"), "multipart/form-data")
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, []byte("multipart-body"), body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", nil)
+	ctx.Request.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	resp, err := DoFormRequest(formRequestTestAdaptor{url: server.URL}, ctx, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}, bytes.NewBufferString("multipart-body"))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 1, requests)
+}
+
+func TestDoFormRequestCancellationDoesNotSendTwiceOrLeakSecrets(t *testing.T) {
+	service.InitHttpClient()
+	var requests atomic.Int32
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		started <- struct{}{}
+		<-release
+	}))
+
+	requestContext, cancel := context.WithCancel(context.Background())
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequestWithContext(requestContext, http.MethodPost, "/v1/images/edits", nil)
+	ctx.Request.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	ctx.Request.Header.Set("X-Secret-Header", "secret-header")
+	var logs bytes.Buffer
+	common.LogWriterMu.Lock()
+	previousWriter := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = &logs
+	common.LogWriterMu.Unlock()
+	defer func() {
+		common.LogWriterMu.Lock()
+		gin.DefaultErrorWriter = previousWriter
+		common.LogWriterMu.Unlock()
+	}()
+	result := make(chan error, 1)
+	go func() {
+		_, err := DoFormRequest(formRequestTestAdaptor{url: server.URL + "/secret-path"}, ctx, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}, bytes.NewBufferString("secret-body"))
+		result <- err
+	}()
+	<-started
+	cancel()
+	err := <-result
+	close(release)
+	server.Close()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "do request failed")
+	var apiError *types.NewAPIError
+	require.True(t, errors.As(err, &apiError))
+	require.Equal(t, types.ErrorCodeDoRequestFailed, apiError.GetErrorCode())
+	require.NotContains(t, err.Error(), "secret-path")
+	require.NotContains(t, err.Error(), "secret-body")
+	require.Equal(t, int32(1), requests.Load())
+	require.Contains(t, logs.String(), "upstream request failed")
+	for _, secret := range []string{"secret-path", "secret-body", "secret-header", "127.0.0.1"} {
+		require.NotContains(t, logs.String(), secret)
+	}
+}
+
+func TestDoFormRequestDeadlineDoesNotSendTwiceOrLeakSecrets(t *testing.T) {
+	service.InitHttpClient()
+	var requests atomic.Int32
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		started <- struct{}{}
+		<-release
+	}))
+
+	requestContext, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequestWithContext(requestContext, http.MethodPost, "/v1/images/edits", nil)
+	ctx.Request.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	var logs bytes.Buffer
+	common.LogWriterMu.Lock()
+	previousWriter := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = &logs
+	common.LogWriterMu.Unlock()
+	defer func() {
+		common.LogWriterMu.Lock()
+		gin.DefaultErrorWriter = previousWriter
+		common.LogWriterMu.Unlock()
+	}()
+	result := make(chan error, 1)
+	go func() {
+		_, err := DoFormRequest(formRequestTestAdaptor{url: server.URL + "/secret-path"}, ctx, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}, bytes.NewBufferString("secret-body"))
+		result <- err
+	}()
+	<-started
+	err := <-result
+	close(release)
+	server.Close()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "do request failed")
+	var apiError *types.NewAPIError
+	require.True(t, errors.As(err, &apiError))
+	require.Equal(t, types.ErrorCodeDoRequestFailed, apiError.GetErrorCode())
+	require.NotContains(t, err.Error(), "secret-path")
+	require.NotContains(t, err.Error(), "secret-body")
+	require.Equal(t, int32(1), requests.Load())
+	require.Contains(t, logs.String(), "upstream request failed")
+	for _, secret := range []string{"secret-path", "secret-body", "127.0.0.1"} {
+		require.NotContains(t, logs.String(), secret)
+	}
+}
+
+func TestDoFormRequestTransportFailureDoesNotLeakSecretsOrRetry(t *testing.T) {
+	service.InitHttpClient()
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("closed listener received a request") }))
+	closedURL := server.URL + "/secret-path?secret-query=1"
+	server.Close()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", nil)
+	ctx.Request.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	ctx.Request.Header.Set("X-Secret-Header", "secret-header")
+	var logs bytes.Buffer
+	common.LogWriterMu.Lock()
+	previousWriter := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = &logs
+	common.LogWriterMu.Unlock()
+	defer func() {
+		common.LogWriterMu.Lock()
+		gin.DefaultErrorWriter = previousWriter
+		common.LogWriterMu.Unlock()
+	}()
+	_, err := DoFormRequest(formRequestTestAdaptor{url: closedURL}, ctx, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}, bytes.NewBufferString("secret-body-and-prompt"))
+	require.Error(t, err)
+	var apiError *types.NewAPIError
+	require.True(t, errors.As(err, &apiError))
+	require.Equal(t, types.ErrorCodeDoRequestFailed, apiError.GetErrorCode())
+	require.ErrorContains(t, err, "do request failed")
+	require.Contains(t, logs.String(), "upstream request failed")
+	for _, secret := range []string{"secret-path", "secret-query", "secret-body", "secret-header", "127.0.0.1"} {
+		require.NotContains(t, logs.String(), secret)
+	}
+}
 
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 	t.Parallel()

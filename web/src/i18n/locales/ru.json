@@ -5306,6 +5306,10 @@
     "Public usage tutorial": "Руководство по использованию",
     "Public view tutorial": "Открыть руководство",
     "Under preparation": "В разработке",
-    "Internal ID": "Внутренний ID"
+    "Internal ID": "Внутренний ID",
+    "Image Edit (/v1/images/edits)": "Редактирование изображения (/v1/images/edits)",
+    "Confirm paid Image Edit test": "Подтвердите платный тест редактирования изображения",
+    "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "Будет отправлен один платный запрос на редактирование изображения для модели {{model}}. Полученное изображение не будет показано или сохранено.",
+    "Send one paid request": "Отправить один платный запрос"
   }
 }

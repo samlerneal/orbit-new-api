@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"math"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -112,6 +116,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 	endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
 
+	isImageEditTest := constant.EndpointType(endpointType) == constant.EndpointTypeImageEdit
+	if isImageEditTest && (testModel == "" || isStream) {
+		return testResult{localErr: errors.New("image edit test requires an explicit model and stream=false")}
+	}
+
 	requestPath := "/v1/chat/completions"
 
 	// 如果指定了端点类型，使用指定的端点类型
@@ -154,7 +163,41 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		testModel = ratio_setting.WithCompactModelSuffix(testModel)
 	}
 
-	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, nil)
+	if isImageEditTest {
+		var requestBody bytes.Buffer
+		writer := multipart.NewWriter(&requestBody)
+		for key, value := range map[string]string{
+			"model":   testModel,
+			"prompt":  "Apply a subtle neutral edit.",
+			"n":       "1",
+			"size":    "1024x1024",
+			"quality": "low",
+		} {
+			if err := writer.WriteField(key, value); err != nil {
+				return testResult{localErr: fmt.Errorf("build image edit test form: %w", err)}
+			}
+		}
+		imagePart, err := writer.CreateFormFile("image", "test-image.png")
+		if err != nil {
+			return testResult{localErr: fmt.Errorf("build image edit test image: %w", err)}
+		}
+		pngImage := image.NewRGBA(image.Rect(0, 0, 512, 512))
+		for y := 0; y < 512; y++ {
+			for x := 0; x < 512; x++ {
+				pngImage.SetRGBA(x, y, color.RGBA{R: 96, G: 128, B: 160, A: 255})
+			}
+		}
+		if err := png.Encode(imagePart, pngImage); err != nil {
+			return testResult{localErr: fmt.Errorf("encode image edit test image: %w", err)}
+		}
+		if err := writer.Close(); err != nil {
+			return testResult{localErr: fmt.Errorf("finalize image edit test form: %w", err)}
+		}
+		c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, &requestBody)
+		c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	} else {
+		c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, nil)
+	}
 
 	cache, err := model.GetUserCache(testUserID)
 	if err != nil {
@@ -167,7 +210,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c.Set("id", testUserID)
 
 	//c.Request.Header.Set("Authorization", "Bearer "+channel.Key)
-	c.Request.Header.Set("Content-Type", "application/json")
+	if !isImageEditTest {
+		c.Request.Header.Set("Content-Type", "application/json")
+	}
 	c.Set("channel", channel.Type)
 	c.Set("base_url", channel.GetBaseURL())
 	group, _ := model.GetUserGroup(testUserID, false)
@@ -199,7 +244,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			relayFormat = types.RelayFormatGemini
 		case constant.EndpointTypeJinaRerank:
 			relayFormat = types.RelayFormatRerank
-		case constant.EndpointTypeImageGeneration:
+		case constant.EndpointTypeImageGeneration, constant.EndpointTypeImageEdit:
 			relayFormat = types.RelayFormatOpenAIImage
 		case constant.EndpointTypeEmbeddings:
 			relayFormat = types.RelayFormatEmbedding
@@ -232,7 +277,15 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 
-	request := buildTestRequest(testModel, endpointType, channel, isStream)
+	var request dto.Request
+	if isImageEditTest {
+		request, err = helper.GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesEdits)
+		if err != nil {
+			return testResult{context: c, localErr: err, newAPIError: types.NewError(err, types.ErrorCodeInvalidRequest)}
+		}
+	} else {
+		request = buildTestRequest(testModel, endpointType, channel, isStream)
+	}
 
 	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
 
@@ -291,7 +344,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	//// 创建一个用于日志的 info 副本，移除 ApiKey
 	//logInfo := info
 	//logInfo.ApiKey = ""
-	common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
+	if !isImageEditTest {
+		common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
+	}
 
 	priceData, err := helper.ModelPriceHelper(c, info, 0, request.GetTokenCountMeta())
 	if err != nil {
@@ -327,6 +382,16 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 				context:     c,
 				localErr:    errors.New("invalid image request type"),
 				newAPIError: types.NewError(errors.New("invalid image request type"), types.ErrorCodeConvertRequestFailed),
+			}
+		}
+	case relayconstant.RelayModeImagesEdits:
+		if imageReq, ok := request.(*dto.ImageRequest); ok {
+			convertedRequest, err = adaptor.ConvertImageRequest(c, info, *imageReq)
+		} else {
+			return testResult{
+				context:     c,
+				localErr:    errors.New("invalid image edit request type"),
+				newAPIError: types.NewError(errors.New("invalid image edit request type"), types.ErrorCodeConvertRequestFailed),
 			}
 		}
 	case relayconstant.RelayModeRerank:
@@ -390,13 +455,24 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			newAPIError: types.NewError(err, types.ErrorCodeConvertRequestFailed),
 		}
 	}
-	jsonData, err := common.Marshal(convertedRequest)
-	if err != nil {
-		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewError(err, types.ErrorCodeJsonMarshalFailed),
+	var requestBody io.Reader
+	var jsonData []byte
+	if isImageEditTest {
+		convertedBody, ok := convertedRequest.(*bytes.Buffer)
+		if !ok {
+			return testResult{context: c, localErr: errors.New("invalid image edit multipart conversion"), newAPIError: types.NewError(errors.New("invalid image edit multipart conversion"), types.ErrorCodeConvertRequestFailed)}
 		}
+		requestBody = convertedBody
+	} else {
+		jsonData, err = common.Marshal(convertedRequest)
+		if err != nil {
+			return testResult{
+				context:     c,
+				localErr:    err,
+				newAPIError: types.NewError(err, types.ErrorCodeJsonMarshalFailed),
+			}
+		}
+		requestBody = bytes.NewBuffer(jsonData)
 	}
 
 	//jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings)
@@ -408,7 +484,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	//	}
 	//}
 
-	if len(info.ParamOverride) > 0 {
+	if len(info.ParamOverride) > 0 && !isImageEditTest {
 		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 		if err != nil {
 			if fixedErr, ok := relaycommon.AsParamOverrideReturnError(err); ok {
@@ -426,8 +502,6 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 
-	requestBody := bytes.NewBuffer(jsonData)
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
 		return testResult{
@@ -439,7 +513,25 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	var httpResp *http.Response
 	if resp != nil {
 		httpResp = resp.(*http.Response)
+		if isImageEditTest {
+			maxResponseBytes := int64(64 << 20)
+			if httpResp.StatusCode != http.StatusOK {
+				maxResponseBytes = 1 << 20
+			}
+			responseBody, readErr := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes+1))
+			_ = httpResp.Body.Close()
+			if readErr != nil {
+				return testResult{context: c, localErr: errors.New("failed to read image edit response"), newAPIError: types.NewError(errors.New("failed to read image edit response"), types.ErrorCodeReadResponseBodyFailed)}
+			}
+			if int64(len(responseBody)) > maxResponseBytes {
+				return testResult{context: c, localErr: errors.New("image edit response exceeds the allowed size"), newAPIError: types.NewError(errors.New("image edit response exceeds the allowed size"), types.ErrorCodeBadResponseBody)}
+			}
+			httpResp.Body = io.NopCloser(bytes.NewReader(responseBody))
+		}
 		if httpResp.StatusCode != http.StatusOK {
+			if isImageEditTest {
+				return testResult{context: c, localErr: errors.New("image edit upstream request failed"), newAPIError: types.NewError(errors.New("image edit upstream request failed"), types.ErrorCodeBadResponse)}
+			}
 			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
 			common.SysError(fmt.Sprintf(
 				"channel test bad response: channel_id=%d name=%s type=%d model=%s endpoint_type=%s status=%d err=%v",
@@ -490,6 +582,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			newAPIError: types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
 		}
 	}
+	if isImageEditTest && !isValidImageEditTestResponse(respBody) {
+		return testResult{context: c, localErr: errors.New("image edit response did not contain an image result"), newAPIError: types.NewError(errors.New("image edit response did not contain an image result"), types.ErrorCodeBadResponseBody)}
+	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 
 	quota, tieredResult := settleTestQuota(info, priceData, usage)
@@ -510,12 +605,23 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		Group:            info.UsingGroup,
 		Other:            other,
 	})
-	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	if !isImageEditTest {
+		common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	}
 	return testResult{
 		context:     c,
 		localErr:    nil,
 		newAPIError: nil,
 	}
+}
+
+func isValidImageEditTestResponse(responseBody []byte) bool {
+	data := gjson.GetBytes(responseBody, "data")
+	if !data.IsArray() || len(data.Array()) == 0 {
+		return false
+	}
+	first := data.Array()[0]
+	return strings.TrimSpace(first.Get("url").String()) != "" || strings.TrimSpace(first.Get("b64_json").String()) != ""
 }
 
 func attachTestBillingRequestInput(info *relaycommon.RelayInfo, request dto.Request) error {
@@ -712,6 +818,8 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 				N:      lo.ToPtr(uint(1)),
 				Size:   "1024x1024",
 			}
+		case constant.EndpointTypeImageEdit:
+			return &dto.ImageRequest{Model: model, Prompt: "Apply a subtle neutral edit.", N: lo.ToPtr(uint(1)), Size: "1024x1024", Quality: "low"}
 		case constant.EndpointTypeJinaRerank:
 			// 返回 RerankRequest
 			return &dto.RerankRequest{
@@ -847,6 +955,12 @@ func TestChannel(c *gin.Context) {
 	testModel := c.Query("model")
 	endpointType := c.Query("endpoint_type")
 	isStream, _ := strconv.ParseBool(c.Query("stream"))
+	if constant.EndpointType(endpointType) == constant.EndpointTypeImageEdit {
+		if strings.TrimSpace(testModel) == "" || isStream || c.Query("confirm_paid_image_edit") != "true" {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "image edit test requires an explicit model, stream=false, and confirmation", "time": 0.0, "error_code": types.ErrorCodeInvalidRequest})
+			return
+		}
+	}
 	testUserID, err := resolveChannelTestUserID(c)
 	if err != nil {
 		common.ApiError(c, err)
@@ -856,6 +970,11 @@ func TestChannel(c *gin.Context) {
 	requestCtx := context.Background()
 	if c.Request != nil {
 		requestCtx = c.Request.Context()
+	}
+	if constant.EndpointType(endpointType) == constant.EndpointTypeImageEdit {
+		var cancel context.CancelFunc
+		requestCtx, cancel = context.WithTimeout(requestCtx, 180*time.Second)
+		defer cancel()
 	}
 	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream)
 	if result.localErr != nil {

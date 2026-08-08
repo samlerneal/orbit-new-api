@@ -5447,6 +5447,10 @@
     "Public usage tutorial": "Usage Tutorial",
     "Public view tutorial": "View Tutorial",
     "Under preparation": "In preparation",
-    "Internal ID": "Internal ID"
+    "Internal ID": "Internal ID",
+    "Image Edit (/v1/images/edits)": "Image Edit (/v1/images/edits)",
+    "Confirm paid Image Edit test": "Confirm paid Image Edit test",
+    "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.",
+    "Send one paid request": "Send one paid request"
   }
 }

@@ -5447,6 +5447,10 @@
     "Public usage tutorial": "使用教程",
     "Public view tutorial": "查看教程",
     "Under preparation": "筹备中",
-    "Internal ID": "内部 ID"
+    "Internal ID": "内部 ID",
+    "Image Edit (/v1/images/edits)": "图像编辑（/v1/images/edits）",
+    "Confirm paid Image Edit test": "确认付费图像编辑测试",
+    "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "这将向模型 {{model}} 发送一次付费的上游图像编辑请求。生成的图片不会显示或保存。",
+    "Send one paid request": "发送一次付费请求"
   }
 }

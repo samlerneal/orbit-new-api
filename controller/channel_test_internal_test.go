@@ -2,9 +2,13 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -15,11 +19,186 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestImageEditChannelTestSendsOneSyntheticMultipartRequest(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	service.InitHttpClient()
+	originalRatios := ratio_setting.GetModelRatioCopy()
+	t.Cleanup(func() {
+		data, err := common.Marshal(originalRatios)
+		require.NoError(t, err)
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+	})
+	ratioMap := ratio_setting.GetModelRatioCopy()
+	ratioMap["gpt-image-2"] = 1
+	ratioData, err := common.Marshal(ratioMap)
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(ratioData)))
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		require.Equal(t, "/v1/images/edits", r.URL.Path)
+		require.NoError(t, r.ParseMultipartForm(2<<20))
+		require.Equal(t, "gpt-image-2", r.FormValue("model"))
+		require.Equal(t, "Apply a subtle neutral edit.", r.FormValue("prompt"))
+		require.Equal(t, "1", r.FormValue("n"))
+		require.Equal(t, "1024x1024", r.FormValue("size"))
+		require.Equal(t, "low", r.FormValue("quality"))
+		files := r.MultipartForm.File["image"]
+		require.Len(t, files, 1)
+		file, err := files[0].Open()
+		require.NoError(t, err)
+		defer file.Close()
+		decoded, err := png.Decode(file)
+		require.NoError(t, err)
+		require.Equal(t, 512, decoded.Bounds().Dx())
+		require.Equal(t, 512, decoded.Bounds().Dy())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[{"url":"https://example.test/image.png"}],"usage":{}}`)
+	}))
+	defer server.Close()
+	insertModelListUser(t, db, 901, "image-edit-tester", "default")
+	baseURL := server.URL
+	channel := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "image edit", Key: "test-key", BaseURL: &baseURL, Models: "gpt-image-2", Group: "default", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "gpt-image-2", ChannelId: channel.Id, Enabled: true}).Error)
+	result := testChannel(context.Background(), channel, 901, "gpt-image-2", string(constant.EndpointTypeImageEdit), false)
+	require.NoError(t, result.localErr)
+	require.Equal(t, 1, requests)
+}
+
+func TestImageEditTestChannelPreflightRejectsBeforeUpstream(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	defer server.Close()
+	baseURL := server.URL
+	channel := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "image edit", Key: "test-key", BaseURL: &baseURL, Models: "gpt-image-2", Group: "default", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(channel).Error)
+	previousMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousMemoryCache })
+
+	tests := []string{
+		"endpoint_type=image-edit&model=gpt-image-2",
+		"endpoint_type=image-edit&confirm_paid_image_edit=true",
+		"endpoint_type=image-edit&model=gpt-image-2&confirm_paid_image_edit=true&stream=true",
+	}
+	for _, query := range tests {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprintf("%d", channel.Id)}}
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/api/channel/test/"+fmt.Sprintf("%d", channel.Id)+"?"+query, nil)
+		TestChannel(ctx)
+		var response struct {
+			Success   bool            `json:"success"`
+			ErrorCode types.ErrorCode `json:"error_code"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		assert.False(t, response.Success)
+		assert.Equal(t, types.ErrorCodeInvalidRequest, response.ErrorCode)
+		assert.Equal(t, 0, requests)
+	}
+}
+
+func TestImageEditChannelTestRejectsOversizedErrorResponse(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	service.InitHttpClient()
+	originalRatios := ratio_setting.GetModelRatioCopy()
+	t.Cleanup(func() {
+		data, err := common.Marshal(originalRatios)
+		require.NoError(t, err)
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+	})
+	ratios := ratio_setting.GetModelRatioCopy()
+	ratios["gpt-image-2"] = 1
+	data, err := common.Marshal(ratios)
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		require.Equal(t, "/v1/images/edits", r.URL.Path)
+		require.NoError(t, r.ParseMultipartForm(2<<20))
+		require.Equal(t, "gpt-image-2", r.FormValue("model"))
+		require.Equal(t, "Apply a subtle neutral edit.", r.FormValue("prompt"))
+		file, err := r.MultipartForm.File["image"][0].Open()
+		require.NoError(t, err)
+		defer file.Close()
+		decoded, err := png.Decode(file)
+		require.NoError(t, err)
+		require.Equal(t, 512, decoded.Bounds().Dx())
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, "secret-error-body-"+strings.Repeat("x", (1<<20)+1))
+	}))
+	defer server.Close()
+	insertModelListUser(t, db, 902, "image-edit-cap", "default")
+	baseURL := server.URL
+	channel := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "image edit", Key: "test-key", BaseURL: &baseURL, Models: "gpt-image-2", Group: "default", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "gpt-image-2", ChannelId: channel.Id, Enabled: true}).Error)
+	result := testChannel(context.Background(), channel, 902, "gpt-image-2", string(constant.EndpointTypeImageEdit), false)
+	require.Equal(t, 1, requests)
+	require.EqualError(t, result.localErr, "image edit response exceeds the allowed size")
+	require.NotNil(t, result.newAPIError)
+	require.Equal(t, types.ErrorCodeBadResponseBody, result.newAPIError.GetErrorCode())
+	for _, secret := range []string{"secret-error-body", "Apply a subtle neutral edit.", "test-key", "b64"} {
+		require.NotContains(t, result.localErr.Error(), secret)
+	}
+}
+
+func TestImageEditChannelTestRejectsOversizedSuccessResponse(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	service.InitHttpClient()
+	original := ratio_setting.GetModelRatioCopy()
+	t.Cleanup(func() {
+		data, err := common.Marshal(original)
+		require.NoError(t, err)
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+	})
+	ratios := ratio_setting.GetModelRatioCopy()
+	ratios["gpt-image-2"] = 1
+	data, err := common.Marshal(ratios)
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		require.Equal(t, "/v1/images/edits", r.URL.Path)
+		require.NoError(t, r.ParseMultipartForm(2<<20))
+		require.Equal(t, "gpt-image-2", r.FormValue("model"))
+		file, err := r.MultipartForm.File["image"][0].Open()
+		require.NoError(t, err)
+		defer file.Close()
+		decoded, err := png.Decode(file)
+		require.NoError(t, err)
+		require.Equal(t, 512, decoded.Bounds().Dx())
+		_, _ = io.WriteString(w, "secret-success-body-"+strings.Repeat("x", (64<<20)+1))
+	}))
+	defer server.Close()
+	insertModelListUser(t, db, 903, "image-edit-success-cap", "default")
+	baseURL := server.URL
+	channel := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "image edit", Key: "test-key", BaseURL: &baseURL, Models: "gpt-image-2", Group: "default", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "gpt-image-2", ChannelId: channel.Id, Enabled: true}).Error)
+	result := testChannel(context.Background(), channel, 903, "gpt-image-2", string(constant.EndpointTypeImageEdit), false)
+	require.Equal(t, 1, requests)
+	require.EqualError(t, result.localErr, "image edit response exceeds the allowed size")
+	require.NotNil(t, result.newAPIError)
+	require.Equal(t, types.ErrorCodeBadResponseBody, result.newAPIError.GetErrorCode())
+	for _, secret := range []string{"secret-success-body", "Apply a subtle neutral edit.", "test-key", "b64"} {
+		require.NotContains(t, result.localErr.Error(), secret)
+	}
+}
 
 func TestValidateChannelProxy(t *testing.T) {
 	tests := []struct {
@@ -54,6 +233,28 @@ func TestValidateChannelProxy(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestImageEditChannelTestContract(t *testing.T) {
+	endpoint, ok := common.GetDefaultEndpointInfo(constant.EndpointTypeImageEdit)
+	require.True(t, ok)
+	assert.Equal(t, "/v1/images/edits", endpoint.Path)
+
+	request, ok := buildTestRequest("gpt-image-2", string(constant.EndpointTypeImageEdit), nil, false).(*dto.ImageRequest)
+	require.True(t, ok)
+	assert.Equal(t, "gpt-image-2", request.Model)
+	assert.Equal(t, "Apply a subtle neutral edit.", request.Prompt)
+	require.NotNil(t, request.N)
+	assert.Equal(t, uint(1), *request.N)
+	assert.Equal(t, "1024x1024", request.Size)
+	assert.Equal(t, "low", request.Quality)
+}
+
+func TestImageEditResponseValidation(t *testing.T) {
+	assert.True(t, isValidImageEditTestResponse([]byte(`{"data":[{"url":"https://example.test/image.png"}]}`)))
+	assert.True(t, isValidImageEditTestResponse([]byte(`{"data":[{"b64_json":"encoded"}]}`)))
+	assert.False(t, isValidImageEditTestResponse([]byte(`{"data":[]}`)))
+	assert.False(t, isValidImageEditTestResponse([]byte(`{"data":[{}]}`)))
 }
 
 func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {

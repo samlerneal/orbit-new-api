@@ -5306,6 +5306,10 @@
     "Public usage tutorial": "使用教學",
     "Public view tutorial": "查看教學",
     "Under preparation": "籌備中",
-    "Internal ID": "內部 ID"
+    "Internal ID": "內部 ID",
+    "Image Edit (/v1/images/edits)": "圖片編輯（/v1/images/edits）",
+    "Confirm paid Image Edit test": "確認付費圖片編輯測試",
+    "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "這會向模型 {{model}} 傳送一次付費的上游圖片編輯請求。產生的圖片不會顯示或儲存。",
+    "Send one paid request": "傳送一次付費請求"
   }
 }

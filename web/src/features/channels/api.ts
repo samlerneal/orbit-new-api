@@ -212,7 +212,12 @@ export async function batchSetChannelTag(
  */
 export async function testChannel(
   id: number,
-  params?: { model?: string; endpoint_type?: string; stream?: boolean }
+  params?: {
+    model?: string
+    endpoint_type?: string
+    stream?: boolean
+    confirm_paid_image_edit?: boolean
+  }
 ): Promise<ChannelTestResponse> {
   const res = await api.get(
     `/api/channel/test/${id}`,

@@ -5249,6 +5249,10 @@
     "Top up now": "Top up now",
     "Topup is temporarily unavailable": "Topup is temporarily unavailable",
     "Transfer available rewards to your account balance.": "Transfer available rewards to your account balance.",
-    "A valid redemption code adds balance immediately.": "A valid redemption code adds balance immediately."
+    "A valid redemption code adds balance immediately.": "A valid redemption code adds balance immediately.",
+    "Image Edit (/v1/images/edits)": "Chỉnh sửa hình ảnh (/v1/images/edits)",
+    "Confirm paid Image Edit test": "Xác nhận kiểm tra chỉnh sửa hình ảnh có phí",
+    "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "Thao tác này gửi một yêu cầu chỉnh sửa hình ảnh có phí lên thượng nguồn cho mô hình {{model}}. Hình ảnh được tạo sẽ không được hiển thị hoặc lưu lại.",
+    "Send one paid request": "Gửi một yêu cầu có phí"
   }
 }

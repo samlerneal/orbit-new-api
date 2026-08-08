@@ -5249,6 +5249,10 @@
     "Top up now": "Top up now",
     "Topup is temporarily unavailable": "Topup is temporarily unavailable",
     "Transfer available rewards to your account balance.": "Transfer available rewards to your account balance.",
-    "A valid redemption code adds balance immediately.": "A valid redemption code adds balance immediately."
+    "A valid redemption code adds balance immediately.": "A valid redemption code adds balance immediately.",
+    "Image Edit (/v1/images/edits)": "画像編集（/v1/images/edits）",
+    "Confirm paid Image Edit test": "有料画像編集テストを確認",
+    "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "モデル {{model}} に対して有料の上流画像編集リクエストを 1 回送信します。生成された画像は表示も保存もされません。",
+    "Send one paid request": "有料リクエストを 1 回送信"
   }
 }

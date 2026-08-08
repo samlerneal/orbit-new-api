@@ -56,6 +56,86 @@ export const channelsQueryKeys = {
   detail: (id: number) => [...channelsQueryKeys.details(), id] as const,
 }
 
+export type ChannelTestDispatch =
+  | { kind: 'confirm-required'; model: string }
+  | {
+      kind: 'send'
+      model: string
+      options: {
+        endpointType?: string
+        stream?: boolean
+        confirmPaidImageEdit?: boolean
+      }
+    }
+
+export function createChannelTestDispatch(
+  model: string,
+  endpointType: string,
+  isStreamTest: boolean,
+  confirmedImageEdit: boolean
+): ChannelTestDispatch {
+  if (endpointType === 'image-edit') {
+    if (!confirmedImageEdit) return { kind: 'confirm-required', model }
+    return {
+      kind: 'send',
+      model,
+      options: {
+        endpointType: 'image-edit',
+        stream: false,
+        confirmPaidImageEdit: true,
+      },
+    }
+  }
+  return {
+    kind: 'send',
+    model,
+    options: {
+      endpointType: endpointType === 'auto' ? undefined : endpointType,
+      stream: isStreamTest || undefined,
+    },
+  }
+}
+
+export function resetChannelTestModeState() {
+  return {
+    testResults: {},
+    rowSelection: {},
+    testingModels: new Set<string>(),
+    isBatchTesting: false,
+    isBatchStopRequested: false,
+    batchProgress: null,
+    failureDetails: null,
+  }
+}
+
+export function isCurrentChannelTestGeneration(
+  capturedGeneration: number,
+  currentGeneration: number,
+  capturedBatchRunId?: number,
+  currentBatchRunId?: number
+): boolean {
+  return (
+    capturedGeneration === currentGeneration &&
+    (capturedBatchRunId === undefined ||
+      capturedBatchRunId === currentBatchRunId)
+  )
+}
+
+export function createChannelTestIdentityGuard(
+  capturedGeneration: number,
+  getCurrentGeneration: () => number,
+  capturedBatchRunId?: number,
+  getCurrentBatchRunId?: () => number
+): () => boolean {
+  return () =>
+    isCurrentChannelTestGeneration(
+      capturedGeneration,
+      getCurrentGeneration(),
+      capturedBatchRunId,
+      getCurrentBatchRunId?.()
+    )
+}
+
 function getChannelTestResponseTime(
   response: ChannelTestResponse
 ): number | undefined {
@@ -275,6 +355,7 @@ export async function handleTestChannel(
     testModel?: string
     endpointType?: string
     stream?: boolean
+    confirmPaidImageEdit?: boolean
     silent?: boolean
   },
   onTestComplete?: (
@@ -285,13 +366,20 @@ export async function handleTestChannel(
   ) => void
 ): Promise<void> {
   const payload =
-    options && (options.testModel || options.endpointType || options.stream)
+    options &&
+    (options.testModel ||
+      options.endpointType ||
+      options.stream ||
+      options.confirmPaidImageEdit)
       ? {
           ...(options.testModel ? { model: options.testModel } : {}),
           ...(options.endpointType
             ? { endpoint_type: options.endpointType }
             : {}),
           ...(options.stream ? { stream: true } : {}),
+          ...(options.confirmPaidImageEdit
+            ? { confirm_paid_image_edit: true }
+            : {}),
         }
       : undefined
 

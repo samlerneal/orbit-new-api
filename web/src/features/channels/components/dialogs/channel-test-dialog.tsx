@@ -90,6 +90,10 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { updateChannel } from '../../api'
 import {
   channelsQueryKeys,
+  createChannelTestDispatch,
+  createChannelTestIdentityGuard,
+  isCurrentChannelTestGeneration,
+  resetChannelTestModeState,
   formatResponseTime,
   handleTestChannel,
 } from '../../lib'
@@ -196,6 +200,7 @@ const endpointTypeOptions: Array<{ value: string; label: string }> = [
     value: 'image-generation',
     label: 'Image Generation (/v1/images/generations)',
   },
+  { value: 'image-edit', label: 'Image Edit (/v1/images/edits)' },
   { value: 'embeddings', label: 'Embeddings (/v1/embeddings)' },
 ]
 
@@ -206,6 +211,7 @@ const endpointSelectItemClass =
 const STREAM_INCOMPATIBLE_ENDPOINTS = new Set([
   'embeddings',
   'image-generation',
+  'image-edit',
   'jina-rerank',
   'openai-response-compact',
 ])
@@ -329,6 +335,8 @@ function ChannelTestDialogContent({
   const queryClient = useQueryClient()
   const currentChannelId = currentRow.id
   const batchStopRequestedRef = useRef(false)
+  const batchRunIdRef = useRef(0)
+  const modeGenerationRef = useRef(0)
   const batchProgressToastIdRef = useRef<ReturnType<
     typeof toast.loading
   > | null>(null)
@@ -351,6 +359,9 @@ function ChannelTestDialogContent({
   const [isDeletingFailed, setIsDeletingFailed] = useState(false)
   const [failureDetails, setFailureDetails] =
     useState<FailureDetailsState | null>(null)
+  const [pendingImageEditModel, setPendingImageEditModel] = useState<
+    string | null
+  >(null)
   const [pagination, setPagination] = useState({
     pageIndex: 0,
     pageSize: 30,
@@ -398,6 +409,8 @@ function ChannelTestDialogContent({
   useEffect(() => dismissBatchProgressToast, [dismissBatchProgressToast])
 
   const resetState = useCallback(() => {
+    modeGenerationRef.current += 1
+    batchRunIdRef.current += 1
     batchStopRequestedRef.current = true
     setEndpointType('auto')
     setIsStreamTest(false)
@@ -412,6 +425,7 @@ function ChannelTestDialogContent({
     setIsDeleteFailedDialogOpen(false)
     setIsDeletingFailed(false)
     setFailureDetails(null)
+    setPendingImageEditModel(null)
     setPagination({ pageIndex: 0, pageSize: 30 })
   }, [])
 
@@ -421,10 +435,20 @@ function ChannelTestDialogContent({
   const handleEndpointTypeChange = useCallback((value: string | null) => {
     if (value === null) return
 
+    modeGenerationRef.current += 1
+    batchRunIdRef.current += 1
+    batchStopRequestedRef.current = true
     setEndpointType(value)
-    if (STREAM_INCOMPATIBLE_ENDPOINTS.has(value)) {
-      setIsStreamTest(false)
-    }
+    setIsStreamTest(false)
+    const resetState = resetChannelTestModeState()
+    setTestResults(resetState.testResults)
+    setRowSelection(resetState.rowSelection)
+    setTestingModels(() => resetState.testingModels)
+    setIsBatchTesting(resetState.isBatchTesting)
+    setIsBatchStopRequested(resetState.isBatchStopRequested)
+    setBatchProgress(resetState.batchProgress)
+    setFailureDetails(resetState.failureDetails)
+    setPendingImageEditModel(null)
   }, [])
 
   const handleSearchTermChange = useCallback(
@@ -532,11 +556,25 @@ function ChannelTestDialogContent({
   )
 
   const refreshChannelLists = useCallback(
-    (patch?: ChannelTestCachePatch) => {
+    (
+      patch?: ChannelTestCachePatch,
+      execution?: { generation: number; batchRunId?: number }
+    ) => {
+      const isCurrentExecution = execution
+        ? createChannelTestIdentityGuard(
+            execution.generation,
+            () => modeGenerationRef.current,
+            execution.batchRunId,
+            () => batchRunIdRef.current
+          )
+        : () => true
+      if (!isCurrentExecution()) return
       updateChannelTestCache(patch)
       void queryClient
         .invalidateQueries({ queryKey: channelsQueryKeys.lists() })
-        .then(() => updateChannelTestCache(patch))
+        .then(() => {
+          if (isCurrentExecution()) updateChannelTestCache(patch)
+        })
         .catch(() => undefined)
     },
     [queryClient, updateChannelTestCache]
@@ -546,12 +584,32 @@ function ChannelTestDialogContent({
     async (
       model: string,
       silent = false,
-      refreshList = true
+      refreshList = true,
+      dispatchOptions?: {
+        endpointType?: string
+        stream?: boolean
+        confirmPaidImageEdit?: boolean
+      },
+      execution?: { generation: number; batchRunId?: number }
     ): Promise<TestResult | undefined> => {
       if (!currentRow) return
 
-      markModelTesting(model, true)
-      updateTestResult(model, { status: 'testing' })
+      const capturedGeneration =
+        execution?.generation ?? modeGenerationRef.current
+      const isCurrentGeneration = () =>
+        isCurrentChannelTestGeneration(
+          capturedGeneration,
+          modeGenerationRef.current,
+          execution?.batchRunId,
+          batchRunIdRef.current
+        )
+
+      if (!isCurrentGeneration()) return
+
+      if (isCurrentGeneration()) {
+        markModelTesting(model, true)
+        updateTestResult(model, { status: 'testing' })
+      }
       let finalResult: TestResult | undefined
 
       try {
@@ -560,11 +618,18 @@ function ChannelTestDialogContent({
           {
             channelName: currentRow.name,
             testModel: model,
-            endpointType: endpointType === 'auto' ? undefined : endpointType,
-            stream: effectiveStreamTest || undefined,
+            endpointType:
+              dispatchOptions?.endpointType ??
+              (endpointType === 'auto' ? undefined : endpointType),
+            stream:
+              dispatchOptions?.stream ?? (effectiveStreamTest || undefined),
+            confirmPaidImageEdit:
+              dispatchOptions?.confirmPaidImageEdit ??
+              endpointType === 'image-edit',
             silent,
           },
           (success, responseTime, error, errorCode) => {
+            if (!isCurrentGeneration()) return
             const completedAt = Date.now()
             finalResult = {
               status: success ? 'success' : 'error',
@@ -582,15 +647,19 @@ function ChannelTestDialogContent({
           completedAt: Date.now(),
           error: error instanceof Error ? error.message : t('Test failed'),
         }
-        updateTestResult(model, finalResult)
+        if (isCurrentGeneration()) updateTestResult(model, finalResult)
       } finally {
-        markModelTesting(model, false)
-        if (refreshList) {
+        if (isCurrentGeneration()) markModelTesting(model, false)
+        if (refreshList && isCurrentGeneration()) {
           refreshChannelLists(
             createChannelTestCachePatch(
               finalResult?.responseTime,
               finalResult?.completedAt
-            )
+            ),
+            {
+              generation: capturedGeneration,
+              batchRunId: execution?.batchRunId,
+            }
           )
         }
       }
@@ -611,8 +680,49 @@ function ChannelTestDialogContent({
     if (!isBatchTesting || isBatchStopRequested) return
 
     batchStopRequestedRef.current = true
+    batchRunIdRef.current += 1
     setIsBatchStopRequested(true)
+    setIsBatchTesting(false)
+    setBatchProgress(null)
   }, [isBatchStopRequested, isBatchTesting])
+
+  const requestModelTest = useCallback(
+    (model: string) => {
+      const dispatch = createChannelTestDispatch(
+        model,
+        endpointType,
+        effectiveStreamTest,
+        false
+      )
+      if (dispatch.kind === 'confirm-required') {
+        setPendingImageEditModel(dispatch.model)
+        return
+      }
+      void testSingleModel(dispatch.model, false, true, dispatch.options)
+    },
+    [effectiveStreamTest, endpointType, testSingleModel]
+  )
+
+  const confirmImageEditTest = useCallback(() => {
+    const model = pendingImageEditModel
+    setPendingImageEditModel(null)
+    if (model) {
+      const dispatch = createChannelTestDispatch(
+        model,
+        endpointType,
+        effectiveStreamTest,
+        true
+      )
+      if (dispatch.kind === 'send') {
+        void testSingleModel(dispatch.model, false, true, dispatch.options)
+      }
+    }
+  }, [
+    effectiveStreamTest,
+    endpointType,
+    pendingImageEditModel,
+    testSingleModel,
+  ])
 
   const handleBatchTest = useCallback(
     async (modelsToTest: string[]) => {
@@ -621,6 +731,18 @@ function ChannelTestDialogContent({
       ]
       if (!uniqueModels.length) return
 
+      const capturedGeneration = modeGenerationRef.current
+      const capturedBatchRunId = batchRunIdRef.current + 1
+      batchRunIdRef.current = capturedBatchRunId
+      const isCurrentGeneration = () =>
+        isCurrentChannelTestGeneration(
+          capturedGeneration,
+          modeGenerationRef.current,
+          capturedBatchRunId,
+          batchRunIdRef.current
+        )
+
+      if (!isCurrentGeneration()) return
       batchStopRequestedRef.current = false
       setIsBatchTesting(true)
       setIsBatchStopRequested(false)
@@ -645,6 +767,7 @@ function ChannelTestDialogContent({
         })
 
         const recordBatchResult = (result: TestResult) => {
+          if (!isCurrentGeneration()) return
           results.push(result)
           completedCount += 1
           if (result.status === 'success') {
@@ -665,7 +788,7 @@ function ChannelTestDialogContent({
           startIndex < uniqueModels.length;
           startIndex += BATCH_TEST_CONCURRENCY
         ) {
-          if (batchStopRequestedRef.current) {
+          if (!isCurrentGeneration() || batchStopRequestedRef.current) {
             break
           }
 
@@ -675,22 +798,37 @@ function ChannelTestDialogContent({
           )
           const batchPromises = batch.map(async (modelName) => {
             try {
-              const result = await testSingleModel(modelName, true, false)
+              if (!isCurrentGeneration()) return undefined
+              const result = await testSingleModel(
+                modelName,
+                true,
+                false,
+                undefined,
+                {
+                  generation: capturedGeneration,
+                  batchRunId: capturedBatchRunId,
+                }
+              )
+              if (!isCurrentGeneration()) return result
               const finalResult = result ?? createFallbackResult()
-              if (!result) {
+              if (!result && isCurrentGeneration()) {
                 updateTestResult(modelName, finalResult)
               }
               recordBatchResult(finalResult)
               return finalResult
             } catch (error: unknown) {
               const fallbackResult = createFallbackResult(error)
-              updateTestResult(modelName, fallbackResult)
+              if (isCurrentGeneration()) {
+                updateTestResult(modelName, fallbackResult)
+              }
               recordBatchResult(fallbackResult)
               return fallbackResult
             }
           })
 
           await Promise.allSettled(batchPromises)
+
+          if (!isCurrentGeneration()) break
 
           if (
             batchStopRequestedRef.current ||
@@ -700,12 +838,16 @@ function ChannelTestDialogContent({
           }
 
           await sleep(BATCH_TEST_DELAY_MS)
+          if (!isCurrentGeneration()) break
         }
 
-        resultPatch = getLatestChannelTestCachePatch(results)
+        if (isCurrentGeneration()) {
+          resultPatch = getLatestChannelTestCachePatch(results)
+        }
         const stopped =
           batchStopRequestedRef.current && completedCount < uniqueModels.length
 
+        if (!isCurrentGeneration()) return
         dismissBatchProgressToast()
         if (stopped) {
           toast.info(
@@ -737,12 +879,17 @@ function ChannelTestDialogContent({
           )
         }
       } finally {
-        batchStopRequestedRef.current = false
-        setIsBatchTesting(false)
-        setIsBatchStopRequested(false)
-        setBatchProgress(null)
-        setRowSelection({})
-        refreshChannelLists(resultPatch)
+        if (isCurrentGeneration()) {
+          batchStopRequestedRef.current = false
+          setIsBatchTesting(false)
+          setIsBatchStopRequested(false)
+          setBatchProgress(null)
+          setRowSelection({})
+          refreshChannelLists(resultPatch, {
+            generation: capturedGeneration,
+            batchRunId: capturedBatchRunId,
+          })
+        }
       }
     },
     [
@@ -831,6 +978,7 @@ function ChannelTestDialogContent({
   )
 
   const isAnyTesting = testingModels.size > 0 || isBatchTesting
+  const isImageEdit = endpointType === 'image-edit'
   const isFilteringModels = searchTerm.trim().length > 0
   const testAllButtonLabel = isFilteringModels
     ? t('Test {{count}} matching models', { count: filteredModels.length })
@@ -848,6 +996,7 @@ function ChannelTestDialogContent({
             }
             onCheckedChange={(value) => table.toggleAllRowsSelected(!!value)}
             aria-label={t('Select all models')}
+            disabled={isImageEdit}
           />
         ),
         cell: ({ row }) => (
@@ -857,6 +1006,7 @@ function ChannelTestDialogContent({
             aria-label={t('Select model {{model}}', {
               model: row.original.model,
             })}
+            disabled={isImageEdit}
           />
         ),
         enableSorting: false,
@@ -929,7 +1079,7 @@ function ChannelTestDialogContent({
                   <Button
                     variant='ghost'
                     size='icon-sm'
-                    onClick={() => testSingleModel(model)}
+                    onClick={() => requestModelTest(model)}
                     disabled={isTestingModel || isBatchTesting}
                     aria-label={t('Test Connection')}
                   />
@@ -951,10 +1101,11 @@ function ChannelTestDialogContent({
     [
       defaultTestModel,
       isBatchTesting,
+      isImageEdit,
+      requestModelTest,
       t,
       testResults,
       testingModels,
-      testSingleModel,
     ]
   )
 
@@ -1075,11 +1226,15 @@ function ChannelTestDialogContent({
                       <Button
                         size='sm'
                         onClick={() => handleBatchTest(filteredModels)}
-                        disabled={isAnyTesting || filteredModels.length === 0}
+                        disabled={
+                          isImageEdit ||
+                          isAnyTesting ||
+                          filteredModels.length === 0
+                        }
                       >
                         {testAllButtonLabel}
                       </Button>
-                      {successModels.length > 0 && (
+                      {!isImageEdit && successModels.length > 0 && (
                         <Button
                           variant='outline'
                           size='sm'
@@ -1091,7 +1246,7 @@ function ChannelTestDialogContent({
                           })}
                         </Button>
                       )}
-                      {failedModels.length > 0 && (
+                      {!isImageEdit && failedModels.length > 0 && (
                         <Button
                           variant='outline'
                           size='sm'
@@ -1157,7 +1312,7 @@ function ChannelTestDialogContent({
               <DataTablePagination table={table} />
             </div>
 
-            <TestModelsBulkActions table={table} />
+            {!isImageEdit && <TestModelsBulkActions table={table} />}
           </div>
         </div>
       </Dialog>
@@ -1173,6 +1328,21 @@ function ChannelTestDialogContent({
         isLoading={isDeletingFailed}
         confirmText={t('Delete')}
         handleConfirm={handleDeleteFailedModels}
+      />
+      <ConfirmDialog
+        open={pendingImageEditModel !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setPendingImageEditModel(null)
+          }
+        }}
+        title={t('Confirm paid Image Edit test')}
+        desc={t(
+          'This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.',
+          { model: pendingImageEditModel ?? '' }
+        )}
+        confirmText={t('Send one paid request')}
+        handleConfirm={confirmImageEditTest}
       />
       <FailureDetailsSheet
         details={failureDetails}
