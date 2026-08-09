@@ -3,7 +3,10 @@ package controller
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"image"
 	"image/png"
 	"io"
 	"net/http"
@@ -72,6 +75,180 @@ func TestImageEditChannelTestSendsOneSyntheticMultipartRequest(t *testing.T) {
 	result := testChannel(context.Background(), channel, 901, "gpt-image-2", string(constant.EndpointTypeImageEdit), false)
 	require.NoError(t, result.localErr)
 	require.Equal(t, 1, requests)
+}
+
+func TestImageCapabilityEditSendsAllManifestFieldsAndFiveSyntheticReferences(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	service.InitHttpClient()
+	originalRatios := ratio_setting.GetModelRatioCopy()
+	t.Cleanup(func() {
+		data, err := common.Marshal(originalRatios)
+		require.NoError(t, err)
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+	})
+	ratios := ratio_setting.GetModelRatioCopy()
+	ratios[imageCapabilityModel] = 1
+	ratioData, err := common.Marshal(ratios)
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(ratioData)))
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		require.Equal(t, "/v1/images/edits", r.URL.Path)
+		require.NoError(t, r.ParseMultipartForm(8<<20))
+		assert.Equal(t, imageCapabilityModel, r.FormValue("model"))
+		assert.Equal(t, "4", r.FormValue("n"))
+		assert.Equal(t, "4096x4096", r.FormValue("size"))
+		assert.Equal(t, "high", r.FormValue("quality"))
+		assert.Equal(t, "webp", r.FormValue("output_format"))
+		assert.Equal(t, "transparent", r.FormValue("background"))
+		files := r.MultipartForm.File["image[]"]
+		require.Len(t, files, 5)
+		for _, fileHeader := range files {
+			file, openErr := fileHeader.Open()
+			require.NoError(t, openErr)
+			decoded, decodeErr := png.Decode(file)
+			_ = file.Close()
+			require.NoError(t, decodeErr)
+			assert.Equal(t, 512, decoded.Bounds().Dx())
+			assert.Equal(t, 512, decoded.Bounds().Dy())
+		}
+		_, _ = io.WriteString(w, `{"data":[{"url":"https://example.test/1"},{"url":"https://example.test/2"},{"url":"https://example.test/3"},{"url":"https://example.test/4"}]}`)
+	}))
+	defer server.Close()
+	insertModelListUser(t, db, 904, "image-capability-edit", "default")
+	baseURL := server.URL
+	channel := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "image capability", Key: "test-key", BaseURL: &baseURL, Models: imageCapabilityModel, Group: "default", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: imageCapabilityModel, ChannelId: channel.Id, Enabled: true}).Error)
+	request := imageCapabilityRequest{SchemaVersion: imageCapabilitySchemaVersion, Model: imageCapabilityModel, Mode: "edit", Shape: "square", Resolution: "4K", N: 4, Quality: "high", Format: "webp", Background: "transparent", ReferenceCount: 5, Stream: false, ConfirmPaidImageProbe: true, ExpectedUpstreamRequests: 1}
+	ctx := context.WithValue(context.Background(), imageCapabilityContextKey{}, request)
+	result := testChannel(ctx, channel, 904, imageCapabilityModel, string(constant.EndpointTypeImageEdit), false)
+	require.NoError(t, result.localErr)
+	require.Equal(t, 1, requests)
+}
+
+func TestRunImageCapabilityGenerationUsesOneControlledRequestAndReturnsBase64Metadata(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	service.InitHttpClient()
+	insertModelListUser(t, db, 905, "image-capability-generation", "default")
+	imageBytes := bytes.Buffer{}
+	require.NoError(t, png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 1024, 1024))))
+	encoded := base64.StdEncoding.EncodeToString(imageBytes.Bytes())
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		require.Equal(t, "/v1/images/generations", r.URL.Path)
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		assert.Equal(t, imageCapabilityModel, payload["model"])
+		assert.NotEmpty(t, payload["prompt"])
+		assert.Equal(t, float64(1), payload["n"])
+		assert.Equal(t, "1024x1024", payload["size"])
+		assert.Equal(t, "low", payload["quality"])
+		assert.Equal(t, "png", payload["output_format"])
+		assert.Equal(t, "opaque", payload["background"])
+		w.Header().Set("X-Request-Id", "sensitive-request-id")
+		_, _ = io.WriteString(w, `{"data":[{"b64_json":"`+encoded+`"}],"usage":{"input_tokens":1},"billable":true,"cost":5}`)
+	}))
+	defer server.Close()
+	baseURL := server.URL
+	channel := &model.Channel{Id: imageCapabilityCandidateID, Type: constant.ChannelTypeOpenAI, Name: "Codex", Key: "test-key", BaseURL: &baseURL, Models: imageCapabilityModel, Group: "default", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: imageCapabilityModel, ChannelId: imageCapabilityCandidateID, Enabled: true}).Error)
+	originalRatios := ratio_setting.GetModelRatioCopy()
+	t.Cleanup(func() {
+		data, err := common.Marshal(originalRatios)
+		require.NoError(t, err)
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+	})
+	ratios := ratio_setting.GetModelRatioCopy()
+	ratios[imageCapabilityModel] = 1
+	ratioData, err := common.Marshal(ratios)
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(ratioData)))
+	request := imageCapabilityCases()[0].Request
+	body, err := json.Marshal(request)
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: "1"}}
+	ctx.Set("id", 905)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/test/1/image-capability/run", bytes.NewReader(body))
+	RunImageCapability(ctx)
+	var response struct {
+		Success bool
+		State   string
+		Data    map[string]any
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	assert.Equal(t, "OBSERVED_SUPPORTED", response.State)
+	assert.Equal(t, float64(1), response.Data["actual_image_count"])
+	assert.Equal(t, []any{"1024x1024"}, response.Data["dimensions"])
+	assert.Equal(t, "png", response.Data["result_format"])
+	assert.Equal(t, "OBSERVED", response.Data["request_id"])
+	assert.Equal(t, "OBSERVED", response.Data["usage"])
+	assert.Equal(t, "OBSERVED", response.Data["billable"])
+	assert.Equal(t, "OBSERVED", response.Data["cost"])
+	assert.NotContains(t, recorder.Body.String(), encoded)
+	assert.NotContains(t, recorder.Body.String(), "sensitive-request-id")
+	assert.Equal(t, 1, requests)
+}
+
+func TestImageCapabilityHandlerRejectsBeforeUpstream(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	defer server.Close()
+	baseURL := server.URL
+	channel := &model.Channel{Id: imageCapabilityCandidateID, Type: constant.ChannelTypeOpenAI, Name: "Codex", BaseURL: &baseURL, Models: imageCapabilityModel, Group: "default", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(channel).Error)
+	imageCapabilityInFlight.Store(false)
+	defer imageCapabilityInFlight.Store(false)
+	cases := imageCapabilityCases()
+	for _, test := range []struct {
+		name, id string
+		request  imageCapabilityRequest
+		want     string
+	}{
+		{name: "identity-drift", id: "2", request: imageCapabilityCases()[0].Request, want: "IMAGE_PROBE_CANDIDATE_IDENTITY_MISMATCH"},
+		{name: "unsafe", id: "1", request: cases[len(cases)-1].Request, want: "IMAGE_PROBE_LOCAL_RESPONSE_LIMIT"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Params = gin.Params{{Key: "id", Value: test.id}}
+			body, err := json.Marshal(test.request)
+			require.NoError(t, err)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+			RunImageCapability(ctx)
+			assert.Contains(t, recorder.Body.String(), test.want)
+			assert.Equal(t, 0, requests)
+		})
+	}
+	for _, payload := range [][]byte{[]byte(`{"case_id":"img-01"}`), []byte(`{"case_id":"img-01","unexpected":true}`)} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Params = gin.Params{{Key: "id", Value: "1"}}
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(payload))
+		RunImageCapability(ctx)
+		assert.Contains(t, recorder.Body.String(), "IMAGE_PROBE_INVALID_JSON")
+		assert.Equal(t, 0, requests)
+	}
+	imageCapabilityInFlight.Store(true)
+	defer imageCapabilityInFlight.Store(false)
+	body, err := json.Marshal(imageCapabilityCases()[0].Request)
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: "1"}}
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	RunImageCapability(ctx)
+	assert.Contains(t, recorder.Body.String(), "IMAGE_PROBE_BUSY")
+	assert.Equal(t, 0, requests)
 }
 
 func TestImageEditTestChannelPreflightRejectsBeforeUpstream(t *testing.T) {
@@ -255,6 +432,142 @@ func TestImageEditResponseValidation(t *testing.T) {
 	assert.True(t, isValidImageEditTestResponse([]byte(`{"data":[{"b64_json":"encoded"}]}`)))
 	assert.False(t, isValidImageEditTestResponse([]byte(`{"data":[]}`)))
 	assert.False(t, isValidImageEditTestResponse([]byte(`{"data":[{}]}`)))
+}
+
+func TestImageCapabilityRequestRejectsUnsafeOrIncompletePaidProbe(t *testing.T) {
+	request := imageCapabilityRequest{
+		CaseID: "img-02", SchemaVersion: imageCapabilitySchemaVersion, Model: imageCapabilityModel,
+		Mode: "edit", Shape: "square", Resolution: "1K", N: 1, Quality: "low",
+		Format: "png", Background: "opaque", ReferenceCount: 1,
+		Stream: false, ConfirmPaidImageProbe: true, ExpectedUpstreamRequests: 1,
+	}
+	require.NoError(t, validateImageCapabilityRequest(request))
+	for _, mutate := range []func(*imageCapabilityRequest){
+		func(r *imageCapabilityRequest) { r.Model = "another-model" },
+		func(r *imageCapabilityRequest) { r.ReferenceCount = 0 },
+		func(r *imageCapabilityRequest) { r.Stream = true },
+		func(r *imageCapabilityRequest) { r.ConfirmPaidImageProbe = false },
+		func(r *imageCapabilityRequest) { r.ExpectedUpstreamRequests = 2 },
+	} {
+		invalid := request
+		mutate(&invalid)
+		require.Error(t, validateImageCapabilityRequest(invalid))
+	}
+}
+
+func TestImageCapabilityManifestIsDeterministicAndBounded(t *testing.T) {
+	first := imageCapabilityManifest()
+	second := imageCapabilityManifest()
+	assert.Equal(t, first, second)
+	firstBytes, firstErr := json.Marshal(first["cases"])
+	secondBytes, secondErr := json.Marshal(second["cases"])
+	require.NoError(t, firstErr)
+	require.NoError(t, secondErr)
+	assert.Equal(t, firstBytes, secondBytes)
+	assert.Equal(t, "sha256:0ff09990f952553227569b5a80bf553ddd569efe62ff0e90db348d197f7f600b", first["hash"])
+	assert.Equal(t, 44, first["unpruned_request_upper_bound"])
+	assert.Equal(t, 42, first["executable_request_upper_bound"])
+	assert.Equal(t, 82, first["unpruned_image_upper_bound"])
+	assert.Equal(t, 74, first["executable_image_upper_bound"])
+	cases, ok := first["cases"].([]imageCapabilityCase)
+	require.True(t, ok)
+	require.Len(t, cases, 44)
+	stageCounts := map[string]int{}
+	uniqueTuples := map[string]bool{}
+	for _, candidate := range cases {
+		stageCounts[candidate.Stage]++
+		assert.Equal(t, fmt.Sprintf("img-%02d", len(uniqueTuples)+1), candidate.ID)
+		request := candidate.Request
+		tuple := fmt.Sprintf("%s/%s/%s/%d/%s/%s/%s/%d", request.Mode, request.Shape, request.Resolution, request.N, request.Quality, request.Format, request.Background, request.ReferenceCount)
+		assert.False(t, uniqueTuples[tuple], "duplicate tuple %s", tuple)
+		uniqueTuples[tuple] = true
+	}
+	assert.Equal(t, map[string]int{"baseline": 2, "axis": 32, "pairwise": 8, "worst-boundary": 2}, stageCounts)
+	assert.Equal(t, "LOCALLY_UNSAFE_TO_PROBE", cases[42].State)
+	assert.Equal(t, "LOCALLY_UNSAFE_TO_PROBE", cases[43].State)
+	assert.Contains(t, fmt.Sprint(first["hash"]), "sha256:")
+}
+
+func TestImageCapabilityManifestPreservesIndependentHighValueAxes(t *testing.T) {
+	seen4K, seenN4, seenPNG, seenHigh := false, false, false, false
+	for _, candidate := range imageCapabilityCases() {
+		if candidate.State == "LOCALLY_UNSAFE_TO_PROBE" {
+			continue
+		}
+		seen4K = seen4K || candidate.Request.Resolution == "4K"
+		seenN4 = seenN4 || candidate.Request.N == 4
+		seenPNG = seenPNG || candidate.Request.Format == "png"
+		seenHigh = seenHigh || candidate.Request.Quality == "high"
+	}
+	assert.True(t, seen4K && seenN4 && seenPNG && seenHigh)
+}
+
+func TestImageProbeResultMetadataDoesNotLeakImageBytesOrFetchURLs(t *testing.T) {
+	imageBytes := bytes.Buffer{}
+	require.NoError(t, png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 2, 3))))
+	encoded := base64.StdEncoding.EncodeToString(imageBytes.Bytes())
+	meta := parseImageProbeResult([]byte(`{"data":[{"b64_json":"` + encoded + `"},{"url":"https://example.test/private.png"}]}`))
+	assert.Equal(t, 2, meta.ActualImageCount)
+	assert.Equal(t, []string{"UNKNOWN"}, meta.Dimensions)
+	assert.Equal(t, "UNKNOWN", meta.Format)
+	assert.NotContains(t, fmt.Sprint(meta), encoded)
+}
+
+func TestImageProbeResultKeepsURLOnlyMetadataUnknown(t *testing.T) {
+	meta := parseImageProbeResult([]byte(`{"data":[{"url":"https://example.test/private.png"}]}`))
+	assert.Equal(t, 1, meta.ActualImageCount)
+	assert.Equal(t, []string{"UNKNOWN"}, meta.Dimensions)
+	assert.Equal(t, "UNKNOWN", meta.Format)
+}
+
+func TestImageProbeExactCaseRequiresMatchingInlineDimensionsAndFormat(t *testing.T) {
+	imageBytes := bytes.Buffer{}
+	require.NoError(t, png.Encode(&imageBytes, image.NewRGBA(image.Rect(0, 0, 2, 3))))
+	encoded := base64.StdEncoding.EncodeToString(imageBytes.Bytes())
+	meta := parseImageProbeResult([]byte(`{"data":[{"b64_json":"` + encoded + `"}]}`))
+	request := imageCapabilityCases()[0].Request
+	request.Resolution = "4K"
+	request.Format = "webp"
+	assert.False(t, imageProbeMatchesExactCase(meta, request))
+	request.Resolution = "1K"
+	request.Format = "png"
+	assert.False(t, imageProbeMatchesExactCase(meta, request))
+	urlMeta := parseImageProbeResult([]byte(`{"data":[{"url":"https://example.test/image"}]}`))
+	assert.False(t, imageProbeMatchesExactCase(urlMeta, imageCapabilityCases()[0].Request))
+}
+
+func TestImageProbeResultDetectsInlineWebPDimensions(t *testing.T) {
+	webp := make([]byte, 30)
+	copy(webp, "RIFF")
+	copy(webp[8:], "WEBPVP8X")
+	webp[24], webp[25], webp[26] = 1, 0, 0 // width = 2
+	webp[27], webp[28], webp[29] = 2, 0, 0 // height = 3
+	encoded := base64.StdEncoding.EncodeToString(webp)
+	meta := parseImageProbeResult([]byte(`{"data":[{"b64_json":"` + encoded + `"}]}`))
+	assert.Equal(t, 1, meta.ActualImageCount)
+	assert.Equal(t, []string{"2x3"}, meta.Dimensions)
+	assert.Equal(t, "webp", meta.Format)
+}
+
+func TestImageProbePresenceReturnsStatesWithoutValues(t *testing.T) {
+	presence := imageProbePresence(http.Header{"X-Request-Id": []string{"secret-id"}}, []byte(`{"usage":{"x":1},"cost":7}`))
+	assert.Equal(t, "OBSERVED", presence["request_id"])
+	assert.Equal(t, "OBSERVED", presence["usage"])
+	assert.Equal(t, "NOT_PRESENT", presence["billable"])
+	assert.NotContains(t, fmt.Sprint(presence), "secret-id")
+}
+
+func TestImageCapabilityStrictJSONRejectsUnknownAndMissingFields(t *testing.T) {
+	valid := imageCapabilityCases()[0].Request
+	body, err := json.Marshal(valid)
+	require.NoError(t, err)
+	for _, payload := range [][]byte{append(append([]byte{}, body[:len(body)-1]...), []byte(`,"unexpected":true}`)...), []byte(`{"case_id":"img-01"}`)} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(payload))
+		_, decodeErr := decodeImageCapabilityRequest(ctx)
+		require.Error(t, decodeErr)
+	}
 }
 
 func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {

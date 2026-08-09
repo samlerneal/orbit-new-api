@@ -4,11 +4,61 @@ import { describe, test } from 'node:test'
 import {
   createChannelTestIdentityGuard,
   createChannelTestDispatch,
+  createImageCapabilityProbeRequest,
+  isImageCapabilityMode,
+  reduceImageCapabilityRun,
   isCurrentChannelTestGeneration,
   resetChannelTestModeState,
 } from '../../lib/channel-actions'
 
 describe('Image Edit channel test dispatch', () => {
+  test('only channel 1 image modes enter the manifest-only paid probe flow', () => {
+    assert.equal(isImageCapabilityMode(1, 'image-generation'), true)
+    assert.equal(isImageCapabilityMode(1, 'image-edit'), true)
+    assert.equal(isImageCapabilityMode(1, 'openai'), false)
+    assert.equal(isImageCapabilityMode(2, 'image-generation'), false)
+  })
+  test('server-matrix probe has one paid request and no free-form fields', () => {
+    const probe = createImageCapabilityProbeRequest('edit')
+    assert.deepEqual(probe, {
+      case_id: '',
+      schema_version: 'image-channel-test.v1',
+      model: 'gpt-image-2',
+      mode: 'edit',
+      shape: 'square',
+      resolution: '1K',
+      n: 1,
+      quality: 'low',
+      format: 'png',
+      background: 'opaque',
+      reference_count: 1,
+      stream: false,
+      confirm_paid_image_probe: true,
+      expected_upstream_requests: 1,
+    })
+    assert.equal('prompt' in probe, false)
+  })
+
+  test('capability modes cannot enter the legacy dispatch path', () => {
+    for (const endpoint of ['image-generation', 'image-edit'] as const) {
+      assert.deepEqual(
+        createChannelTestDispatch('gpt-image-2', endpoint, false, false, true),
+        { kind: 'capability-required', model: 'gpt-image-2' }
+      )
+    }
+  })
+
+  test('a failed capability run updates only its current case and never advances', () => {
+    const state = reduceImageCapabilityRun('img-17', {
+      success: false,
+      state: 'UNVERIFIED',
+      error_code: 'IMAGE_PROBE_UPSTREAM_UNVERIFIED',
+    })
+    assert.equal(state.caseId, 'img-17')
+    assert.equal(state.response.state, 'UNVERIFIED')
+    assert.equal(state.nextRequest, null)
+    assert.equal(state.shouldAdvance, false)
+  })
   test('cancelling confirmation sends zero requests', () => {
     let calls = 0
     const dispatch = createChannelTestDispatch(

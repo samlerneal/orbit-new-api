@@ -33,12 +33,37 @@ import type {
   GetChannelResponse,
   GetChannelsParams,
   GetChannelsResponse,
+  ImageCapabilityRequest,
+  ImageCapabilityResponse,
   MultiKeyManageParams,
   MultiKeyStatusResponse,
   SearchChannelsParams,
   SearchChannelsResponse,
   TagOperationParams,
 } from './types'
+
+export async function getImageCapability(
+  id: number
+): Promise<ImageCapabilityResponse> {
+  const res = await api.get(
+    `/api/channel/test/${id}/image-capability`,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function runImageCapability(
+  id: number,
+  request: ImageCapabilityRequest,
+  config: ApiRequestConfig = {}
+): Promise<ImageCapabilityResponse> {
+  const res = await api.post(
+    `/api/channel/test/${id}/image-capability/run`,
+    request,
+    channelActionConfig(config)
+  )
+  return res.data
+}
 
 const channelActionConfig = (
   config: ApiRequestConfig = {}

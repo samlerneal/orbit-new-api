@@ -5451,6 +5451,14 @@
     "Image Edit (/v1/images/edits)": "图像编辑（/v1/images/edits）",
     "Confirm paid Image Edit test": "确认付费图像编辑测试",
     "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "这将向模型 {{model}} 发送一次付费的上游图像编辑请求。生成的图片不会显示或保存。",
-    "Send one paid request": "发送一次付费请求"
+    "Send one paid request": "发送一次付费请求",
+    "Select a server manifest case before sending.": "发送前请选择服务端清单用例。",
+    "Image capability matrix": "图片能力矩阵",
+    "Confirm paid image capability probe": "确认付费图片能力探测",
+    "All options below are supplied by the server. This action sends exactly 1 upstream request and may return {{count}} images.": "下方选项均由服务端提供。此操作恰好发送 1 次上游请求，最多可能返回 {{count}} 张图片。",
+    "Capability matrix unavailable": "能力矩阵不可用",
+    "Image capability is unavailable for this channel.": "此渠道的图片能力不可用。",
+    "Image probe completed.": "图片探测已完成。",
+    "Image probe failed.": "图片探测失败。"
   }
 }

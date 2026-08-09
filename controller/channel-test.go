@@ -3,11 +3,14 @@ package controller
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
+	_ "image/jpeg"
 	"image/png"
 	"io"
 	"math"
@@ -16,6 +19,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -40,9 +44,443 @@ import (
 )
 
 type testResult struct {
-	context     *gin.Context
-	localErr    error
-	newAPIError *types.NewAPIError
+	context           *gin.Context
+	localErr          error
+	newAPIError       *types.NewAPIError
+	responseBody      []byte
+	upstreamBodyBytes int
+	responseHeaders   http.Header
+}
+
+const (
+	imageCapabilitySchemaVersion = "image-channel-test.v1"
+	imageCapabilityCandidateID   = 1
+	imageCapabilityModel         = "gpt-image-2"
+	imageCapabilityBodyLimit     = 16 << 10
+)
+
+var imageCapabilityInFlight atomic.Bool
+
+// imageCapabilityRequest is intentionally complete. Keeping this contract on
+// the server prevents a UI build from silently widening a paid probe.
+type imageCapabilityRequest struct {
+	CaseID                   string `json:"case_id"`
+	SchemaVersion            string `json:"schema_version"`
+	Model                    string `json:"model"`
+	Mode                     string `json:"mode"`
+	Shape                    string `json:"shape"`
+	Resolution               string `json:"resolution"`
+	N                        int    `json:"n"`
+	Quality                  string `json:"quality"`
+	Format                   string `json:"format"`
+	Background               string `json:"background"`
+	ReferenceCount           int    `json:"reference_count"`
+	Stream                   bool   `json:"stream"`
+	ConfirmPaidImageProbe    bool   `json:"confirm_paid_image_probe"`
+	ExpectedUpstreamRequests int    `json:"expected_upstream_requests"`
+}
+
+type imageCapabilityContextKey struct{}
+
+func imageCapabilitySize(request imageCapabilityRequest) string {
+	base := map[string]map[string]string{
+		"1K": {"square": "1024x1024", "landscape": "1536x1024", "portrait": "1024x1536"},
+		"2K": {"square": "2048x2048", "landscape": "3072x2048", "portrait": "2048x3072"},
+		"4K": {"square": "4096x4096", "landscape": "6144x4096", "portrait": "4096x6144"},
+	}
+	return base[request.Resolution][request.Shape]
+}
+
+func imageCapabilityRequestFromContext(ctx context.Context) (imageCapabilityRequest, bool) {
+	request, ok := ctx.Value(imageCapabilityContextKey{}).(imageCapabilityRequest)
+	return request, ok
+}
+
+type imageCapabilityMatrix struct {
+	SchemaVersion string                 `json:"schema_version"`
+	Candidate     map[string]interface{} `json:"candidate"`
+	Axes          map[string]interface{} `json:"axes"`
+	Manifest      map[string]interface{} `json:"manifest"`
+}
+
+type imageCapabilityCase struct {
+	ID      string                 `json:"id"`
+	Stage   string                 `json:"stage"`
+	Request imageCapabilityRequest `json:"request"`
+	State   string                 `json:"state"`
+}
+
+type imageProbeResultMeta struct {
+	ActualImageCount  int      `json:"actual_image_count"`
+	Dimensions        []string `json:"dimensions"`
+	Format            string   `json:"result_format"`
+	hasURL            bool
+	hasInline         bool
+	inlineParseFailed bool
+}
+
+func imageProbePresence(headers http.Header, body []byte) gin.H {
+	requestID := "NOT_PRESENT"
+	if headers.Get("X-Request-Id") != "" || headers.Get("X-Request-ID") != "" {
+		requestID = "OBSERVED"
+	}
+	presence := func(path string) string {
+		if gjson.GetBytes(body, path).Exists() {
+			return "OBSERVED"
+		}
+		return "NOT_PRESENT"
+	}
+	return gin.H{"request_id": requestID, "usage": presence("usage"), "billable": presence("billable"), "cost": presence("cost")}
+}
+
+func decodeImageProbeConfig(decoded []byte) (image.Config, string, error) {
+	config, format, err := image.DecodeConfig(bytes.NewReader(decoded))
+	if err == nil {
+		return config, format, nil
+	}
+	// WebP is an allowed output format but the Go standard image registry does
+	// not decode it. VP8X carries the canvas dimensions without decoding pixels.
+	if len(decoded) >= 30 && string(decoded[:4]) == "RIFF" && string(decoded[8:12]) == "WEBP" && string(decoded[12:16]) == "VP8X" {
+		width := 1 + int(decoded[24]) + int(decoded[25])<<8 + int(decoded[26])<<16
+		height := 1 + int(decoded[27]) + int(decoded[28])<<8 + int(decoded[29])<<16
+		if width > 0 && height > 0 {
+			return image.Config{Width: width, Height: height}, "webp", nil
+		}
+	}
+	return image.Config{}, "", err
+}
+
+// parseImageProbeResult inspects inline image data only in memory. URLs are
+// never fetched, and the returned metadata deliberately excludes all bytes.
+func parseImageProbeResult(responseBody []byte) imageProbeResultMeta {
+	meta := imageProbeResultMeta{Dimensions: []string{}, Format: "UNKNOWN"}
+	data := gjson.GetBytes(responseBody, "data")
+	if !data.IsArray() {
+		return meta
+	}
+	seen := map[string]bool{}
+	for _, entry := range data.Array() {
+		if entry.Get("url").String() != "" {
+			meta.ActualImageCount++
+			meta.hasURL = true
+			continue
+		}
+		encoded := entry.Get("b64_json").String()
+		if encoded == "" {
+			meta.ActualImageCount++
+			meta.inlineParseFailed = true
+			continue
+		}
+		meta.ActualImageCount++
+		meta.hasInline = true
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			meta.inlineParseFailed = true
+			continue
+		}
+		config, format, err := decodeImageProbeConfig(decoded)
+		if err != nil {
+			meta.inlineParseFailed = true
+			continue
+		}
+		if meta.Format != "UNKNOWN" && meta.Format != format {
+			meta.inlineParseFailed = true
+		}
+		meta.Format = format
+		dimension := fmt.Sprintf("%dx%d", config.Width, config.Height)
+		if !seen[dimension] {
+			seen[dimension] = true
+			meta.Dimensions = append(meta.Dimensions, dimension)
+		}
+	}
+	if len(meta.Dimensions) == 0 {
+		meta.Dimensions = []string{"UNKNOWN"}
+	}
+	if meta.hasURL {
+		meta.Dimensions = []string{"UNKNOWN"}
+		meta.Format = "UNKNOWN"
+	}
+	return meta
+}
+
+func imageProbeMatchesExactCase(meta imageProbeResultMeta, request imageCapabilityRequest) bool {
+	return meta.hasInline && !meta.hasURL && !meta.inlineParseFailed &&
+		meta.ActualImageCount == request.N && len(meta.Dimensions) == 1 &&
+		meta.Dimensions[0] == imageCapabilitySize(request) && meta.Format == request.Format
+}
+
+func imageCapabilityCases() []imageCapabilityCase {
+	base := func(mode string) imageCapabilityRequest {
+		return imageCapabilityRequest{SchemaVersion: imageCapabilitySchemaVersion, Model: imageCapabilityModel, Mode: mode, Shape: "square", Resolution: "1K", N: 1, Quality: "low", Format: "png", Background: "opaque", ReferenceCount: map[string]int{"generation": 0, "edit": 1}[mode], Stream: false, ConfirmPaidImageProbe: true, ExpectedUpstreamRequests: 1}
+	}
+	cases := make([]imageCapabilityCase, 0, 52)
+	add := func(stage string, request imageCapabilityRequest, state string) {
+		request.CaseID = fmt.Sprintf("img-%02d", len(cases)+1)
+		cases = append(cases, imageCapabilityCase{ID: request.CaseID, Stage: stage, Request: request, State: state})
+	}
+	for _, mode := range []string{"generation", "edit"} {
+		add("baseline", base(mode), "NOT_PROBED")
+	}
+	// Each candidate value is represented by a safe one-axis case for both modes.
+	for _, mode := range []string{"generation", "edit"} {
+		for _, shape := range []string{"landscape", "portrait"} {
+			r := base(mode)
+			r.Shape = shape
+			add("axis", r, "NOT_PROBED")
+		}
+		for _, resolution := range []string{"2K", "4K"} {
+			r := base(mode)
+			r.Resolution = resolution
+			add("axis", r, "NOT_PROBED")
+		}
+		for _, n := range []int{2, 4} {
+			r := base(mode)
+			r.N = n
+			add("axis", r, "NOT_PROBED")
+		}
+		for _, quality := range []string{"auto", "medium", "high"} {
+			r := base(mode)
+			r.Quality = quality
+			add("axis", r, "NOT_PROBED")
+		}
+		for _, format := range []string{"jpeg", "webp"} {
+			r := base(mode)
+			r.Format = format
+			add("axis", r, "NOT_PROBED")
+		}
+		for _, background := range []string{"auto", "transparent"} {
+			r := base(mode)
+			r.Background = background
+			add("axis", r, "NOT_PROBED")
+		}
+	}
+	for _, references := range []int{2, 5} {
+		r := base("edit")
+		r.ReferenceCount = references
+		add("axis", r, "NOT_PROBED")
+	}
+	for len(cases) < 36 {
+		r := base([]string{"generation", "edit"}[len(cases)%2])
+		r.Shape = []string{"square", "landscape", "portrait"}[len(cases)%3]
+		r.N = []int{1, 2, 4}[len(cases)%3]
+		add("axis", r, "NOT_PROBED")
+	}
+	for len(cases) < 50 {
+		r := base([]string{"generation", "edit"}[len(cases)%2])
+		r.Shape = []string{"square", "landscape", "portrait"}[len(cases)%3]
+		r.Resolution = []string{"1K", "2K", "4K"}[len(cases)%3]
+		r.N = []int{1, 2, 4}[len(cases)%3]
+		r.Quality = []string{"auto", "low", "medium", "high"}[len(cases)%4]
+		r.Format = []string{"png", "jpeg", "webp"}[len(cases)%3]
+		add("pairwise", r, "NOT_PROBED")
+	}
+	r := base("generation")
+	r.Resolution = "4K"
+	r.N = 4
+	r.Quality = "high"
+	r.Format = "png"
+	add("worst-boundary", r, "LOCALLY_UNSAFE_TO_PROBE")
+	r = base("edit")
+	r.Resolution = "4K"
+	r.N = 4
+	r.Quality = "high"
+	r.Format = "png"
+	r.ReferenceCount = 5
+	add("worst-boundary", r, "LOCALLY_UNSAFE_TO_PROBE")
+	unique := make([]imageCapabilityCase, 0, len(cases))
+	seen := make(map[string]struct{}, len(cases))
+	for _, candidate := range cases {
+		request := candidate.Request
+		key := fmt.Sprintf("%s/%s/%s/%d/%s/%s/%s/%d", request.Mode, request.Shape, request.Resolution, request.N, request.Quality, request.Format, request.Background, request.ReferenceCount)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		request.CaseID = fmt.Sprintf("img-%02d", len(unique)+1)
+		candidate.ID = request.CaseID
+		candidate.Request = request
+		unique = append(unique, candidate)
+	}
+	return unique
+}
+
+func imageCapabilityManifest() map[string]interface{} {
+	cases := imageCapabilityCases()
+	canonical, _ := json.Marshal(cases)
+	hash := fmt.Sprintf("sha256:%x", sha256.Sum256(canonical))
+	maximumImages, executableImages, executableRequests := 0, 0, 0
+	for _, candidate := range cases {
+		maximumImages += candidate.Request.N
+		if candidate.State != "LOCALLY_UNSAFE_TO_PROBE" {
+			executableRequests++
+			executableImages += candidate.Request.N
+		}
+	}
+	stageCounts := map[string]int{}
+	for _, candidate := range cases {
+		stageCounts[candidate.Stage]++
+	}
+	return map[string]interface{}{"algorithm": "progressive-pruning.v1", "hash": hash, "cases": cases, "stages": []map[string]interface{}{{"name": "baseline", "count": stageCounts["baseline"]}, {"name": "axis", "count": stageCounts["axis"]}, {"name": "pairwise", "count": stageCounts["pairwise"]}, {"name": "worst-boundary", "count": stageCounts["worst-boundary"]}}, "unpruned_request_upper_bound": len(cases), "executable_request_upper_bound": executableRequests, "unpruned_image_upper_bound": maximumImages, "executable_image_upper_bound": executableImages}
+}
+
+func imageCapabilityValues() imageCapabilityMatrix {
+	return imageCapabilityMatrix{
+		SchemaVersion: imageCapabilitySchemaVersion,
+		Candidate:     map[string]interface{}{"channel_id": imageCapabilityCandidateID, "name": "Codex", "model": imageCapabilityModel},
+		Axes: map[string]interface{}{
+			"mode": []string{"generation", "edit"}, "shape": []string{"square", "landscape", "portrait"},
+			"resolution": []string{"1K", "2K", "4K"}, "n": []int{1, 2, 4},
+			"quality": []string{"auto", "low", "medium", "high"}, "format": []string{"png", "jpeg", "webp"},
+			"background": []string{"auto", "opaque", "transparent"}, "edit_reference_count": []int{1, 2, 5},
+		},
+		Manifest: imageCapabilityManifest(),
+	}
+}
+
+func containsImageCapabilityValue(values []string, value string) bool {
+	return lo.Contains(values, value)
+}
+
+func validateImageCapabilityRequest(request imageCapabilityRequest) error {
+	if request.SchemaVersion != imageCapabilitySchemaVersion || request.Model != imageCapabilityModel ||
+		!containsImageCapabilityValue([]string{"generation", "edit"}, request.Mode) ||
+		!containsImageCapabilityValue([]string{"square", "landscape", "portrait"}, request.Shape) ||
+		!containsImageCapabilityValue([]string{"1K", "2K", "4K"}, request.Resolution) ||
+		!lo.Contains([]int{1, 2, 4}, request.N) ||
+		!containsImageCapabilityValue([]string{"auto", "low", "medium", "high"}, request.Quality) ||
+		!containsImageCapabilityValue([]string{"png", "jpeg", "webp"}, request.Format) ||
+		!containsImageCapabilityValue([]string{"auto", "opaque", "transparent"}, request.Background) ||
+		(request.Mode == "generation" && request.ReferenceCount != 0) ||
+		(request.Mode == "edit" && !lo.Contains([]int{1, 2, 5}, request.ReferenceCount)) ||
+		request.Stream || !request.ConfirmPaidImageProbe || request.ExpectedUpstreamRequests != 1 {
+		return errors.New("IMAGE_PROBE_INVALID_MATRIX_REQUEST")
+	}
+	for _, candidate := range imageCapabilityCases() {
+		candidateRequest := candidate.Request
+		candidateRequest.ConfirmPaidImageProbe = request.ConfirmPaidImageProbe
+		if candidateRequest == request {
+			return nil
+		}
+	}
+	return errors.New("IMAGE_PROBE_CASE_NOT_IN_MANIFEST")
+}
+
+func imageCapabilityCandidate(channel *model.Channel) bool {
+	if channel == nil || channel.Id != imageCapabilityCandidateID || strings.TrimSpace(channel.Name) != "Codex" || channel.Type != constant.ChannelTypeOpenAI {
+		return false
+	}
+	return lo.Contains(channel.GetModels(), imageCapabilityModel)
+}
+
+func loadImageCapabilityCandidate(c *gin.Context) (*model.Channel, bool) {
+	if c.Param("id") != strconv.Itoa(imageCapabilityCandidateID) {
+		return nil, false
+	}
+	channel, err := model.GetChannelById(imageCapabilityCandidateID, true)
+	if err != nil || !imageCapabilityCandidate(channel) {
+		return nil, false
+	}
+	return channel, true
+}
+
+func imageCapabilityIdentityMismatch(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"success": false, "error_code": "IMAGE_PROBE_CANDIDATE_IDENTITY_MISMATCH"})
+}
+
+// GetImageCapability is read-only and intentionally performs no upstream IO.
+func GetImageCapability(c *gin.Context) {
+	if _, ok := loadImageCapabilityCandidate(c); !ok {
+		imageCapabilityIdentityMismatch(c)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": imageCapabilityValues()})
+}
+
+func decodeImageCapabilityRequest(c *gin.Context) (imageCapabilityRequest, error) {
+	var request imageCapabilityRequest
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, imageCapabilityBodyLimit)
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return request, errors.New("IMAGE_PROBE_INVALID_JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		return request, errors.New("IMAGE_PROBE_INVALID_JSON")
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return request, errors.New("IMAGE_PROBE_INVALID_JSON")
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil || len(raw) != 14 {
+		return request, errors.New("IMAGE_PROBE_INVALID_JSON")
+	}
+	for _, field := range []string{"case_id", "schema_version", "model", "mode", "shape", "resolution", "n", "quality", "format", "background", "reference_count", "stream", "confirm_paid_image_probe", "expected_upstream_requests"} {
+		if _, ok := raw[field]; !ok {
+			return request, errors.New("IMAGE_PROBE_INVALID_JSON")
+		}
+	}
+	return request, validateImageCapabilityRequest(request)
+}
+
+// RunImageCapability is the only paid-probe entrypoint. It accepts one
+// explicit case and never advances the manifest or retries automatically.
+func RunImageCapability(c *gin.Context) {
+	channel, ok := loadImageCapabilityCandidate(c)
+	if !ok {
+		imageCapabilityIdentityMismatch(c)
+		return
+	}
+	request, err := decodeImageCapabilityRequest(c)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error_code": err.Error()})
+		return
+	}
+	caseState := "NOT_PROBED"
+	for _, candidate := range imageCapabilityCases() {
+		if candidate.ID == request.CaseID {
+			caseState = candidate.State
+			break
+		}
+	}
+	if caseState == "LOCALLY_UNSAFE_TO_PROBE" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "state": "LOCALLY_UNSAFE_TO_PROBE", "error_code": "IMAGE_PROBE_LOCAL_RESPONSE_LIMIT"})
+		return
+	}
+	if !imageCapabilityInFlight.CompareAndSwap(false, true) {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error_code": "IMAGE_PROBE_BUSY"})
+		return
+	}
+	defer imageCapabilityInFlight.Store(false)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 180*time.Second)
+	defer cancel()
+	ctx = context.WithValue(ctx, imageCapabilityContextKey{}, request)
+	endpoint := string(constant.EndpointTypeImageGeneration)
+	if request.Mode == "edit" {
+		endpoint = string(constant.EndpointTypeImageEdit)
+	}
+	started := time.Now()
+	testUserID, userErr := resolveChannelTestUserID(c)
+	if userErr != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error_code": "IMAGE_PROBE_LOCAL_PRECONDITION_FAILED"})
+		return
+	}
+	result := testChannel(ctx, channel, testUserID, imageCapabilityModel, endpoint, false)
+	latency := time.Since(started).Milliseconds()
+	if result.localErr != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "state": "UNVERIFIED", "error_code": "IMAGE_PROBE_UPSTREAM_UNVERIFIED", "latency_ms": latency})
+		return
+	}
+	resultMeta := parseImageProbeResult(result.responseBody)
+	if !imageProbeMatchesExactCase(resultMeta, request) {
+		c.JSON(http.StatusOK, gin.H{"success": false, "state": "UNVERIFIED", "error_code": "IMAGE_PROBE_RESPONSE_METADATA_MISMATCH", "latency_ms": latency, "upstream_body_bytes": result.upstreamBodyBytes})
+		return
+	}
+	metadata := gin.H{"mode": request.Mode, "shape": request.Shape, "resolution": request.Resolution, "n": request.N, "quality": request.Quality, "format": request.Format, "background": request.Background, "reference_count": request.ReferenceCount, "actual_image_count": resultMeta.ActualImageCount, "upstream_body_bytes": result.upstreamBodyBytes, "dimensions": resultMeta.Dimensions, "result_format": resultMeta.Format}
+	for key, value := range imageProbePresence(result.responseHeaders, result.responseBody) {
+		metadata[key] = value
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "state": "OBSERVED_SUPPORTED", "latency_ms": latency, "data": metadata})
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
@@ -117,6 +555,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
 
 	isImageEditTest := constant.EndpointType(endpointType) == constant.EndpointTypeImageEdit
+	isImageProbe := constant.EndpointType(endpointType) == constant.EndpointTypeImageGeneration || isImageEditTest
+	probeRequest, hasProbeRequest := imageCapabilityRequestFromContext(ctx)
 	if isImageEditTest && (testModel == "" || isStream) {
 		return testResult{localErr: errors.New("image edit test requires an explicit model and stream=false")}
 	}
@@ -166,29 +606,44 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	if isImageEditTest {
 		var requestBody bytes.Buffer
 		writer := multipart.NewWriter(&requestBody)
-		for key, value := range map[string]string{
+		formValues := map[string]string{
 			"model":   testModel,
 			"prompt":  "Apply a subtle neutral edit.",
 			"n":       "1",
 			"size":    "1024x1024",
 			"quality": "low",
-		} {
+		}
+		if hasProbeRequest {
+			formValues = map[string]string{
+				"model": testModel, "prompt": "Apply a neutral transformation to the supplied solid-color image.",
+				"n": strconv.Itoa(probeRequest.N), "size": imageCapabilitySize(probeRequest), "quality": probeRequest.Quality,
+				"output_format": probeRequest.Format, "background": probeRequest.Background,
+			}
+		}
+		for key, value := range formValues {
 			if err := writer.WriteField(key, value); err != nil {
 				return testResult{localErr: fmt.Errorf("build image edit test form: %w", err)}
 			}
 		}
-		imagePart, err := writer.CreateFormFile("image", "test-image.png")
-		if err != nil {
-			return testResult{localErr: fmt.Errorf("build image edit test image: %w", err)}
+		referenceCount := 1
+		if hasProbeRequest {
+			referenceCount = probeRequest.ReferenceCount
 		}
-		pngImage := image.NewRGBA(image.Rect(0, 0, 512, 512))
-		for y := 0; y < 512; y++ {
-			for x := 0; x < 512; x++ {
-				pngImage.SetRGBA(x, y, color.RGBA{R: 96, G: 128, B: 160, A: 255})
+		for referenceIndex := 0; referenceIndex < referenceCount; referenceIndex++ {
+			imagePart, err := writer.CreateFormFile("image", fmt.Sprintf("test-image-%d.png", referenceIndex+1))
+			if err != nil {
+				return testResult{localErr: fmt.Errorf("build image edit test image: %w", err)}
 			}
-		}
-		if err := png.Encode(imagePart, pngImage); err != nil {
-			return testResult{localErr: fmt.Errorf("encode image edit test image: %w", err)}
+			pngImage := image.NewRGBA(image.Rect(0, 0, 512, 512))
+			fill := uint8(96 + referenceIndex*24)
+			for y := 0; y < 512; y++ {
+				for x := 0; x < 512; x++ {
+					pngImage.SetRGBA(x, y, color.RGBA{R: fill, G: 128, B: 160, A: 255})
+				}
+			}
+			if err := png.Encode(imagePart, pngImage); err != nil {
+				return testResult{localErr: fmt.Errorf("encode image edit test image: %w", err)}
+			}
 		}
 		if err := writer.Close(); err != nil {
 			return testResult{localErr: fmt.Errorf("finalize image edit test form: %w", err)}
@@ -210,7 +665,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c.Set("id", testUserID)
 
 	//c.Request.Header.Set("Authorization", "Bearer "+channel.Key)
-	if !isImageEditTest {
+	if !isImageProbe {
 		c.Request.Header.Set("Content-Type", "application/json")
 	}
 	c.Set("channel", channel.Type)
@@ -285,6 +740,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	} else {
 		request = buildTestRequest(testModel, endpointType, channel, isStream)
+		if hasProbeRequest && isImageProbe {
+			request = &dto.ImageRequest{Model: testModel, Prompt: "Create a neutral abstract solid-color composition.", N: lo.ToPtr(uint(probeRequest.N)), Size: imageCapabilitySize(probeRequest), Quality: probeRequest.Quality, OutputFormat: json.RawMessage(strconv.Quote(probeRequest.Format)), Background: json.RawMessage(strconv.Quote(probeRequest.Background))}
+		}
 	}
 
 	info, err := relaycommon.GenRelayInfo(c, relayFormat, request, nil)
@@ -344,7 +802,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	//// 创建一个用于日志的 info 副本，移除 ApiKey
 	//logInfo := info
 	//logInfo.ApiKey = ""
-	if !isImageEditTest {
+	if !isImageProbe {
 		common.SysLog(fmt.Sprintf("testing channel %d with model %s , info %+v ", channel.Id, testModel, info.ToString()))
 	}
 
@@ -513,10 +971,14 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	var httpResp *http.Response
 	if resp != nil {
 		httpResp = resp.(*http.Response)
-		if isImageEditTest {
+		if isImageProbe {
 			maxResponseBytes := int64(64 << 20)
 			if httpResp.StatusCode != http.StatusOK {
 				maxResponseBytes = 1 << 20
+			}
+			if httpResp.ContentLength > maxResponseBytes {
+				_ = httpResp.Body.Close()
+				return testResult{context: c, localErr: errors.New("image response exceeds the allowed size"), newAPIError: types.NewError(errors.New("image response exceeds the allowed size"), types.ErrorCodeBadResponseBody)}
 			}
 			responseBody, readErr := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes+1))
 			_ = httpResp.Body.Close()
@@ -529,8 +991,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			httpResp.Body = io.NopCloser(bytes.NewReader(responseBody))
 		}
 		if httpResp.StatusCode != http.StatusOK {
-			if isImageEditTest {
-				return testResult{context: c, localErr: errors.New("image edit upstream request failed"), newAPIError: types.NewError(errors.New("image edit upstream request failed"), types.ErrorCodeBadResponse)}
+			if isImageProbe {
+				return testResult{context: c, localErr: errors.New("image upstream request failed"), newAPIError: types.NewError(errors.New("image upstream request failed"), types.ErrorCodeBadResponse)}
 			}
 			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
 			common.SysError(fmt.Sprintf(
@@ -582,8 +1044,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			newAPIError: types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
 		}
 	}
-	if isImageEditTest && !isValidImageEditTestResponse(respBody) {
-		return testResult{context: c, localErr: errors.New("image edit response did not contain an image result"), newAPIError: types.NewError(errors.New("image edit response did not contain an image result"), types.ErrorCodeBadResponseBody)}
+	if isImageProbe && !isValidImageEditTestResponse(respBody) {
+		return testResult{context: c, localErr: errors.New("image response did not contain an image result"), newAPIError: types.NewError(errors.New("image response did not contain an image result"), types.ErrorCodeBadResponseBody)}
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 
@@ -592,27 +1054,25 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
-	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
-		ChannelId:        channel.Id,
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
-		ModelName:        info.OriginModelName,
-		TokenName:        "模型测试",
-		Quota:            quota,
-		Content:          "模型测试",
-		UseTimeSeconds:   int(consumedTime),
-		IsStream:         info.IsStream,
-		Group:            info.UsingGroup,
-		Other:            other,
-	})
-	if !isImageEditTest {
+	if !hasProbeRequest {
+		model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
+			ChannelId:        channel.Id,
+			PromptTokens:     usage.PromptTokens,
+			CompletionTokens: usage.CompletionTokens,
+			ModelName:        info.OriginModelName,
+			TokenName:        "模型测试",
+			Quota:            quota,
+			Content:          "模型测试",
+			UseTimeSeconds:   int(consumedTime),
+			IsStream:         info.IsStream,
+			Group:            info.UsingGroup,
+			Other:            other,
+		})
+	}
+	if !isImageProbe {
 		common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	}
-	return testResult{
-		context:     c,
-		localErr:    nil,
-		newAPIError: nil,
-	}
+	return testResult{context: c, responseBody: respBody, upstreamBodyBytes: len(respBody), responseHeaders: httpResp.Header.Clone()}
 }
 
 func isValidImageEditTestResponse(responseBody []byte) bool {

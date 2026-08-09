@@ -5310,6 +5310,14 @@
     "Image Edit (/v1/images/edits)": "圖片編輯（/v1/images/edits）",
     "Confirm paid Image Edit test": "確認付費圖片編輯測試",
     "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "這會向模型 {{model}} 傳送一次付費的上游圖片編輯請求。產生的圖片不會顯示或儲存。",
-    "Send one paid request": "傳送一次付費請求"
+    "Send one paid request": "傳送一次付費請求",
+    "Select a server manifest case before sending.": "傳送前請選擇伺服器清單案例。",
+    "Image capability matrix": "圖片能力矩陣",
+    "Confirm paid image capability probe": "確認付費圖片能力探測",
+    "All options below are supplied by the server. This action sends exactly 1 upstream request and may return {{count}} images.": "下方選項皆由伺服器提供。此操作恰好傳送 1 次上游請求，最多可能傳回 {{count}} 張圖片。",
+    "Capability matrix unavailable": "能力矩陣無法使用",
+    "Image capability is unavailable for this channel.": "此渠道的圖片能力無法使用。",
+    "Image probe completed.": "圖片探測已完成。",
+    "Image probe failed.": "圖片探測失敗。"
   }
 }

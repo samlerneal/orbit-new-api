@@ -5253,6 +5253,14 @@
     "Image Edit (/v1/images/edits)": "Modification d'image (/v1/images/edits)",
     "Confirm paid Image Edit test": "Confirmer le test de modification d'image payant",
     "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "Cette action envoie une requête payante de modification d'image en amont pour le modèle {{model}}. L'image générée ne sera ni affichée ni enregistrée.",
-    "Send one paid request": "Envoyer une requête payante"
+    "Send one paid request": "Envoyer une requête payante",
+    "Select a server manifest case before sending.": "Sélectionnez un cas du manifeste serveur avant l'envoi.",
+    "Image capability matrix": "Matrice de capacité d'image",
+    "Confirm paid image capability probe": "Confirmer la sonde d'image payante",
+    "All options below are supplied by the server. This action sends exactly 1 upstream request and may return {{count}} images.": "Toutes les options ci-dessous sont fournies par le serveur. Cette action envoie exactement 1 requête en amont et peut renvoyer {{count}} images.",
+    "Capability matrix unavailable": "Matrice de capacité indisponible",
+    "Image capability is unavailable for this channel.": "La capacité d'image est indisponible pour ce canal.",
+    "Image probe completed.": "La sonde d'image est terminée.",
+    "Image probe failed.": "La sonde d'image a échoué."
   }
 }

@@ -41,7 +41,40 @@ import {
   updateChannelBalance,
 } from '../api'
 import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
-import type { ChannelTestResponse, CopyChannelParams } from '../types'
+import type {
+  ChannelTestResponse,
+  CopyChannelParams,
+  ImageCapabilityRequest,
+  ImageCapabilityResponse,
+} from '../types'
+
+export function createImageCapabilityProbeRequest(
+  mode: 'generation' | 'edit'
+): ImageCapabilityRequest {
+  return {
+    case_id: '',
+    schema_version: 'image-channel-test.v1',
+    model: 'gpt-image-2',
+    mode,
+    shape: 'square',
+    resolution: '1K',
+    n: 1,
+    quality: 'low',
+    format: 'png',
+    background: 'opaque',
+    reference_count: mode === 'edit' ? 1 : 0,
+    stream: false,
+    confirm_paid_image_probe: true,
+    expected_upstream_requests: 1,
+  }
+}
+
+export function isImageCapabilityMode(channelId: number, endpointType: string) {
+  return (
+    channelId === 1 &&
+    (endpointType === 'image-generation' || endpointType === 'image-edit')
+  )
+}
 
 // ============================================================================
 // Query Keys
@@ -57,6 +90,7 @@ export const channelsQueryKeys = {
 }
 
 export type ChannelTestDispatch =
+  | { kind: 'capability-required'; model: string }
   | { kind: 'confirm-required'; model: string }
   | {
       kind: 'send'
@@ -72,8 +106,10 @@ export function createChannelTestDispatch(
   model: string,
   endpointType: string,
   isStreamTest: boolean,
-  confirmedImageEdit: boolean
+  confirmedImageEdit: boolean,
+  isImageCapability = false
 ): ChannelTestDispatch {
+  if (isImageCapability) return { kind: 'capability-required', model }
   if (endpointType === 'image-edit') {
     if (!confirmedImageEdit) return { kind: 'confirm-required', model }
     return {
@@ -93,6 +129,18 @@ export function createChannelTestDispatch(
       endpointType: endpointType === 'auto' ? undefined : endpointType,
       stream: isStreamTest || undefined,
     },
+  }
+}
+
+export function reduceImageCapabilityRun(
+  caseId: string,
+  response: ImageCapabilityResponse
+) {
+  return {
+    caseId,
+    response,
+    nextRequest: null,
+    shouldAdvance: false,
   }
 }
 

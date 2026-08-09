@@ -5451,6 +5451,14 @@
     "Image Edit (/v1/images/edits)": "Image Edit (/v1/images/edits)",
     "Confirm paid Image Edit test": "Confirm paid Image Edit test",
     "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.",
-    "Send one paid request": "Send one paid request"
+    "Send one paid request": "Send one paid request",
+    "Select a server manifest case before sending.": "Select a server manifest case before sending.",
+    "Image capability matrix": "Image capability matrix",
+    "Confirm paid image capability probe": "Confirm paid image capability probe",
+    "All options below are supplied by the server. This action sends exactly 1 upstream request and may return {{count}} images.": "All options below are supplied by the server. This action sends exactly 1 upstream request and may return {{count}} images.",
+    "Capability matrix unavailable": "Capability matrix unavailable",
+    "Image capability is unavailable for this channel.": "Image capability is unavailable for this channel.",
+    "Image probe completed.": "Image probe completed.",
+    "Image probe failed.": "Image probe failed."
   }
 }

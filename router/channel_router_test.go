@@ -1,7 +1,9 @@
 package router
 
 import (
+	"bytes"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
@@ -35,6 +37,49 @@ func TestChannelStatusRoutesRegisterWithoutConflict(t *testing.T) {
 	require.NotPanics(t, func() {
 		registerChannelRoutes(api)
 	})
+}
+
+func TestImageCapabilityRoutesRegisterWithDistinctMethods(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	api := engine.Group("/api")
+	registerChannelRoutes(api)
+	routes := engine.Routes()
+	seen := map[string]bool{}
+	for _, route := range routes {
+		seen[route.Method+" "+route.Path] = true
+	}
+	assert.True(t, seen[http.MethodGet+" /api/channel/test/:id/image-capability"])
+	assert.True(t, seen[http.MethodPost+" /api/channel/test/:id/image-capability/run"])
+}
+
+func TestImageCapabilityRouteSpecsRequireOperateAndProtectPaidPost(t *testing.T) {
+	require.Len(t, imageCapabilityRouteSpecs, 2)
+	get, post := imageCapabilityRouteSpecs[0], imageCapabilityRouteSpecs[1]
+	assert.Equal(t, http.MethodGet, get.method)
+	assert.Equal(t, authz.ChannelOperate, get.permission)
+	assert.False(t, get.requiresCriticalRateLimit)
+	assert.Equal(t, http.MethodPost, post.method)
+	assert.Equal(t, authz.ChannelOperate, post.permission)
+	assert.True(t, post.requiresCriticalRateLimit)
+	assert.True(t, post.requiresDisableCache)
+	assert.True(t, post.requiresSecureVerification)
+	assert.Equal(t, reflect.ValueOf(controller.RunImageCapability).Pointer(), reflect.ValueOf(post.handler).Pointer())
+}
+
+func TestImageCapabilityRoutesRejectUnauthenticatedRequestsBeforeHandlers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	api := engine.Group("/api")
+	registerChannelRoutes(api)
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/api/channel/test/1/image-capability", nil),
+		httptest.NewRequest(http.MethodPost, "/api/channel/test/1/image-capability/run", bytes.NewBufferString(`{}`)),
+	} {
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, request)
+		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	}
 }
 
 func assertChannelRoutePermission(t *testing.T, method string, path string, permission authz.Permission, handler any) {

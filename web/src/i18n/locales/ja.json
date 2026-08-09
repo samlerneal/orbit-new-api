@@ -5253,6 +5253,14 @@
     "Image Edit (/v1/images/edits)": "画像編集（/v1/images/edits）",
     "Confirm paid Image Edit test": "有料画像編集テストを確認",
     "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "モデル {{model}} に対して有料の上流画像編集リクエストを 1 回送信します。生成された画像は表示も保存もされません。",
-    "Send one paid request": "有料リクエストを 1 回送信"
+    "Send one paid request": "有料リクエストを 1 回送信",
+    "Select a server manifest case before sending.": "送信前にサーバーマニフェストのケースを選択してください。",
+    "Image capability matrix": "画像機能マトリクス",
+    "Confirm paid image capability probe": "有料画像機能プローブを確認",
+    "All options below are supplied by the server. This action sends exactly 1 upstream request and may return {{count}} images.": "以下の選択肢はすべてサーバーから提供されます。この操作は上流へのリクエストをちょうど 1 回送信し、最大 {{count}} 枚の画像を返す場合があります。",
+    "Capability matrix unavailable": "機能マトリクスを利用できません",
+    "Image capability is unavailable for this channel.": "このチャネルでは画像機能を利用できません。",
+    "Image probe completed.": "画像プローブが完了しました。",
+    "Image probe failed.": "画像プローブに失敗しました。"
   }
 }

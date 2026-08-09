@@ -5253,6 +5253,14 @@
     "Image Edit (/v1/images/edits)": "Chỉnh sửa hình ảnh (/v1/images/edits)",
     "Confirm paid Image Edit test": "Xác nhận kiểm tra chỉnh sửa hình ảnh có phí",
     "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "Thao tác này gửi một yêu cầu chỉnh sửa hình ảnh có phí lên thượng nguồn cho mô hình {{model}}. Hình ảnh được tạo sẽ không được hiển thị hoặc lưu lại.",
-    "Send one paid request": "Gửi một yêu cầu có phí"
+    "Send one paid request": "Gửi một yêu cầu có phí",
+    "Select a server manifest case before sending.": "Chọn trường hợp từ manifest máy chủ trước khi gửi.",
+    "Image capability matrix": "Ma trận khả năng hình ảnh",
+    "Confirm paid image capability probe": "Xác nhận thăm dò hình ảnh có phí",
+    "All options below are supplied by the server. This action sends exactly 1 upstream request and may return {{count}} images.": "Mọi tùy chọn bên dưới đều do máy chủ cung cấp. Thao tác này gửi chính xác 1 yêu cầu thượng nguồn và có thể trả về {{count}} hình ảnh.",
+    "Capability matrix unavailable": "Ma trận khả năng hiện không khả dụng",
+    "Image capability is unavailable for this channel.": "Khả năng hình ảnh không khả dụng cho kênh này.",
+    "Image probe completed.": "Thăm dò hình ảnh đã hoàn tất.",
+    "Image probe failed.": "Thăm dò hình ảnh thất bại."
   }
 }

@@ -190,6 +190,38 @@ export interface ChannelTestResponse {
   }
 }
 
+export type ImageCapabilityState =
+  | 'OBSERVED_SUPPORTED'
+  | 'OBSERVED_UNSUPPORTED'
+  | 'LOCALLY_UNSAFE_TO_PROBE'
+  | 'NOT_PROBED'
+  | 'UNVERIFIED'
+
+export interface ImageCapabilityRequest {
+  case_id: string
+  schema_version: 'image-channel-test.v1'
+  model: 'gpt-image-2'
+  mode: 'generation' | 'edit'
+  shape: 'square' | 'landscape' | 'portrait'
+  resolution: '1K' | '2K' | '4K'
+  n: 1 | 2 | 4
+  quality: 'auto' | 'low' | 'medium' | 'high'
+  format: 'png' | 'jpeg' | 'webp'
+  background: 'auto' | 'opaque' | 'transparent'
+  reference_count: 0 | 1 | 2 | 5
+  stream: false
+  confirm_paid_image_probe: true
+  expected_upstream_requests: 1
+}
+
+export interface ImageCapabilityResponse {
+  success: boolean
+  error_code?: string
+  state?: ImageCapabilityState
+  latency_ms?: number
+  data?: Record<string, unknown>
+}
+
 export interface ChannelBalanceResponse {
   success: boolean
   message?: string

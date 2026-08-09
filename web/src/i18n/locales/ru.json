@@ -5310,6 +5310,14 @@
     "Image Edit (/v1/images/edits)": "Редактирование изображения (/v1/images/edits)",
     "Confirm paid Image Edit test": "Подтвердите платный тест редактирования изображения",
     "This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.": "Будет отправлен один платный запрос на редактирование изображения для модели {{model}}. Полученное изображение не будет показано или сохранено.",
-    "Send one paid request": "Отправить один платный запрос"
+    "Send one paid request": "Отправить один платный запрос",
+    "Select a server manifest case before sending.": "Перед отправкой выберите вариант из манифеста сервера.",
+    "Image capability matrix": "Матрица возможностей изображений",
+    "Confirm paid image capability probe": "Подтвердить платную проверку изображений",
+    "All options below are supplied by the server. This action sends exactly 1 upstream request and may return {{count}} images.": "Все параметры ниже предоставляет сервер. Это действие отправляет ровно 1 запрос к вышестоящему сервису и может вернуть {{count}} изображений.",
+    "Capability matrix unavailable": "Матрица возможностей недоступна",
+    "Image capability is unavailable for this channel.": "Возможности изображений недоступны для этого канала.",
+    "Image probe completed.": "Проверка изображения завершена.",
+    "Image probe failed.": "Проверка изображения не удалась."
   }
 }

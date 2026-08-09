@@ -20,6 +20,8 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 	channelRoute := apiRouter.Group("/channel")
 	channelRoute.Use(middleware.AdminAuth())
 
+	registerImageCapabilityRoutes(channelRoute)
+
 	channelRoute.POST("/:id/key",
 		middleware.RootAuth(),
 		middleware.CriticalRateLimit(),
@@ -33,6 +35,42 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 			middleware.RequirePermission(route.permission),
 			route.handler,
 		)
+	}
+}
+
+type imageCapabilityRouteSpec struct {
+	method                     string
+	path                       string
+	permission                 authz.Permission
+	requiresCriticalRateLimit  bool
+	requiresDisableCache       bool
+	requiresSecureVerification bool
+	handler                    gin.HandlerFunc
+}
+
+var imageCapabilityRouteSpecs = []imageCapabilityRouteSpec{
+	{method: http.MethodGet, path: "/test/:id/image-capability", permission: authz.ChannelOperate, handler: controller.GetImageCapability},
+	{method: http.MethodPost, path: "/test/:id/image-capability/run", permission: authz.ChannelOperate, requiresCriticalRateLimit: true, requiresDisableCache: true, requiresSecureVerification: true, handler: controller.RunImageCapability},
+}
+
+func registerImageCapabilityRoutes(channelRoute *gin.RouterGroup) {
+	for _, spec := range imageCapabilityRouteSpecs {
+		handlers := []gin.HandlerFunc{middleware.RequirePermission(spec.permission)}
+		if spec.requiresCriticalRateLimit {
+			handlers = append(handlers, middleware.CriticalRateLimit())
+		}
+		if spec.requiresDisableCache {
+			handlers = append(handlers, middleware.DisableCache())
+		}
+		if spec.requiresSecureVerification {
+			handlers = append(handlers, middleware.SecureVerificationRequired())
+		}
+		handlers = append(handlers, spec.handler)
+		if spec.method == http.MethodGet {
+			channelRoute.GET(spec.path, handlers...)
+		} else {
+			channelRoute.POST(spec.path, handlers...)
+		}
 	}
 }
 

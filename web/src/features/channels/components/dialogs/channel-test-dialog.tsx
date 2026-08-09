@@ -87,11 +87,18 @@ import {
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useIsMobile } from '@/hooks/use-mobile'
 
-import { updateChannel } from '../../api'
+import {
+  getImageCapability,
+  runImageCapability,
+  updateChannel,
+} from '../../api'
 import {
   channelsQueryKeys,
   createChannelTestDispatch,
+  createImageCapabilityProbeRequest,
   createChannelTestIdentityGuard,
+  isImageCapabilityMode,
+  reduceImageCapabilityRun,
   isCurrentChannelTestGeneration,
   resetChannelTestModeState,
   formatResponseTime,
@@ -100,6 +107,8 @@ import {
 import type {
   Channel,
   GetChannelsResponse,
+  ImageCapabilityRequest,
+  ImageCapabilityResponse,
   SearchChannelsResponse,
 } from '../../types'
 import { useChannels } from '../channels-provider'
@@ -340,6 +349,7 @@ function ChannelTestDialogContent({
   const batchProgressToastIdRef = useRef<ReturnType<
     typeof toast.loading
   > | null>(null)
+  const imageProbeAbortRef = useRef<AbortController | null>(null)
   const [endpointType, setEndpointType] = useState('auto')
   const [isStreamTest, setIsStreamTest] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -362,6 +372,13 @@ function ChannelTestDialogContent({
   const [pendingImageEditModel, setPendingImageEditModel] = useState<
     string | null
   >(null)
+  const [imageCapability, setImageCapability] =
+    useState<ImageCapabilityResponse | null>(null)
+  const [imageProbeResult, setImageProbeResult] =
+    useState<ImageCapabilityResponse | null>(null)
+  const [imageProbe, setImageProbe] = useState<ImageCapabilityRequest>(() =>
+    createImageCapabilityProbeRequest('generation')
+  )
   const [pagination, setPagination] = useState({
     pageIndex: 0,
     pageSize: 30,
@@ -374,6 +391,20 @@ function ChannelTestDialogContent({
       })),
     [t]
   )
+  const isImageCapability = isImageCapabilityMode(
+    currentChannelId,
+    endpointType
+  )
+
+  useEffect(() => {
+    if (!isImageCapability) {
+      setImageCapability(null)
+      return
+    }
+    void getImageCapability(currentChannelId)
+      .then(setImageCapability)
+      .catch(() => setImageCapability({ success: false }))
+  }, [currentChannelId, isImageCapability])
 
   const dismissBatchProgressToast = useCallback(() => {
     if (batchProgressToastIdRef.current === null) return
@@ -426,6 +457,11 @@ function ChannelTestDialogContent({
     setIsDeletingFailed(false)
     setFailureDetails(null)
     setPendingImageEditModel(null)
+    setImageCapability(null)
+    setImageProbeResult(null)
+    imageProbeAbortRef.current?.abort()
+    imageProbeAbortRef.current = null
+    setImageProbe(createImageCapabilityProbeRequest('generation'))
     setPagination({ pageIndex: 0, pageSize: 30 })
   }, [])
 
@@ -449,6 +485,11 @@ function ChannelTestDialogContent({
     setBatchProgress(resetState.batchProgress)
     setFailureDetails(resetState.failureDetails)
     setPendingImageEditModel(null)
+    setImageCapability(null)
+    setImageProbeResult(null)
+    imageProbeAbortRef.current?.abort()
+    imageProbeAbortRef.current = null
+    setImageProbe(createImageCapabilityProbeRequest('generation'))
   }, [])
 
   const handleSearchTermChange = useCallback(
@@ -593,6 +634,7 @@ function ChannelTestDialogContent({
       execution?: { generation: number; batchRunId?: number }
     ): Promise<TestResult | undefined> => {
       if (!currentRow) return
+      if (isImageCapability) return
 
       const capturedGeneration =
         execution?.generation ?? modeGenerationRef.current
@@ -669,6 +711,7 @@ function ChannelTestDialogContent({
       currentRow,
       endpointType,
       effectiveStreamTest,
+      isImageCapability,
       markModelTesting,
       refreshChannelLists,
       t,
@@ -692,20 +735,74 @@ function ChannelTestDialogContent({
         model,
         endpointType,
         effectiveStreamTest,
-        false
+        false,
+        isImageCapability
       )
+      if (dispatch.kind === 'capability-required') {
+        if (model !== 'gpt-image-2' || !imageCapability?.success) {
+          toast.error(t('Image capability is unavailable for this channel.'))
+          return
+        }
+        if (!imageProbe.case_id) {
+          toast.error(t('Select a server manifest case before sending.'))
+          return
+        }
+        setPendingImageEditModel(model)
+        return
+      }
       if (dispatch.kind === 'confirm-required') {
         setPendingImageEditModel(dispatch.model)
         return
       }
       void testSingleModel(dispatch.model, false, true, dispatch.options)
     },
-    [effectiveStreamTest, endpointType, testSingleModel]
+    [
+      effectiveStreamTest,
+      endpointType,
+      imageCapability?.success,
+      imageProbe.case_id,
+      isImageCapability,
+      t,
+      testSingleModel,
+    ]
   )
 
   const confirmImageEditTest = useCallback(() => {
     const model = pendingImageEditModel
     setPendingImageEditModel(null)
+    if (model && isImageCapability) {
+      const controller = new AbortController()
+      imageProbeAbortRef.current = controller
+      const capturedGeneration = modeGenerationRef.current
+      void runImageCapability(currentChannelId, imageProbe, {
+        signal: controller.signal,
+      })
+        .then((response) => {
+          if (capturedGeneration !== modeGenerationRef.current) return
+          const result = reduceImageCapabilityRun(imageProbe.case_id, response)
+          setImageProbeResult(result.response)
+          updateTestResult(model, {
+            status: response.success ? 'success' : 'error',
+            completedAt: Date.now(),
+            responseTime: response.latency_ms,
+            errorCode: response.error_code,
+          })
+        })
+        .catch(() => {
+          if (capturedGeneration === modeGenerationRef.current) {
+            updateTestResult(model, {
+              status: 'error',
+              completedAt: Date.now(),
+            })
+          }
+        })
+        .finally(() => {
+          if (imageProbeAbortRef.current === controller) {
+            imageProbeAbortRef.current = null
+          }
+        })
+      return
+    }
     if (model) {
       const dispatch = createChannelTestDispatch(
         model,
@@ -720,12 +817,17 @@ function ChannelTestDialogContent({
   }, [
     effectiveStreamTest,
     endpointType,
+    currentChannelId,
+    imageProbe,
+    isImageCapability,
     pendingImageEditModel,
     testSingleModel,
+    updateTestResult,
   ])
 
   const handleBatchTest = useCallback(
     async (modelsToTest: string[]) => {
+      if (isImageCapability) return
       const uniqueModels = [
         ...new Set(modelsToTest.map((model) => model.trim()).filter(Boolean)),
       ]
@@ -896,6 +998,7 @@ function ChannelTestDialogContent({
       dismissBatchProgressToast,
       refreshChannelLists,
       t,
+      isImageCapability,
       testSingleModel,
       updateTestResult,
     ]
@@ -979,6 +1082,7 @@ function ChannelTestDialogContent({
 
   const isAnyTesting = testingModels.size > 0 || isBatchTesting
   const isImageEdit = endpointType === 'image-edit'
+  const legacyImageActionsDisabled = isImageEdit || isImageCapability
   const isFilteringModels = searchTerm.trim().length > 0
   const testAllButtonLabel = isFilteringModels
     ? t('Test {{count}} matching models', { count: filteredModels.length })
@@ -996,7 +1100,7 @@ function ChannelTestDialogContent({
             }
             onCheckedChange={(value) => table.toggleAllRowsSelected(!!value)}
             aria-label={t('Select all models')}
-            disabled={isImageEdit}
+            disabled={legacyImageActionsDisabled}
           />
         ),
         cell: ({ row }) => (
@@ -1006,7 +1110,7 @@ function ChannelTestDialogContent({
             aria-label={t('Select model {{model}}', {
               model: row.original.model,
             })}
-            disabled={isImageEdit}
+            disabled={legacyImageActionsDisabled}
           />
         ),
         enableSorting: false,
@@ -1101,7 +1205,7 @@ function ChannelTestDialogContent({
     [
       defaultTestModel,
       isBatchTesting,
-      isImageEdit,
+      legacyImageActionsDisabled,
       requestModelTest,
       t,
       testResults,
@@ -1202,6 +1306,77 @@ function ChannelTestDialogContent({
             </div>
           </div>
 
+          {isImageCapability && (
+            <div className='rounded-md border p-3 text-sm'>
+              <p className='font-medium'>{t('Image capability matrix')}</p>
+              <p className='text-muted-foreground mt-1 text-xs'>
+                {t(
+                  'All options below are supplied by the server. This action sends exactly 1 upstream request and may return {{count}} images.',
+                  { count: imageProbe.n }
+                )}
+              </p>
+              {imageCapability?.success ? (
+                <div className='mt-2 grid gap-2 text-xs'>
+                  <div className='flex flex-wrap gap-1'>
+                    {(
+                      (
+                        imageCapability.data?.manifest as
+                          | {
+                              cases?: Array<{
+                                id: string
+                                request: ImageCapabilityRequest
+                              }>
+                            }
+                          | undefined
+                      )?.cases ?? []
+                    ).map((entry) => (
+                      <Button
+                        key={entry.id}
+                        type='button'
+                        size='sm'
+                        variant={
+                          imageProbe.case_id === entry.id
+                            ? 'default'
+                            : 'outline'
+                        }
+                        className='h-6 px-2 text-xs'
+                        onClick={() => setImageProbe(entry.request)}
+                      >
+                        {entry.id}
+                      </Button>
+                    ))}
+                  </div>
+                  {Object.entries(
+                    (imageCapability.data?.axes as Record<string, unknown>) ??
+                      {}
+                  ).map(([axis, values]) => {
+                    return (
+                      <div
+                        key={axis}
+                        className='flex flex-wrap items-center gap-1'
+                      >
+                        <span className='mr-1 font-medium'>{axis}:</span>
+                        {Array.isArray(values) ? values.join(', ') : ''}
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className='text-destructive mt-2 text-xs'>
+                  {imageCapability?.error_code ??
+                    t('Capability matrix unavailable')}
+                </p>
+              )}
+              {imageProbeResult && (
+                <p className='text-muted-foreground mt-2 text-xs'>
+                  {imageProbeResult.success
+                    ? t('Image probe completed.')
+                    : (imageProbeResult.error_code ?? t('Image probe failed.'))}
+                </p>
+              )}
+            </div>
+          )}
+
           <div className='space-y-3 max-sm:has-[div[role="toolbar"]]:pb-16'>
             <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
               <div className='min-w-0 space-y-2'>
@@ -1227,37 +1402,39 @@ function ChannelTestDialogContent({
                         size='sm'
                         onClick={() => handleBatchTest(filteredModels)}
                         disabled={
-                          isImageEdit ||
+                          legacyImageActionsDisabled ||
                           isAnyTesting ||
                           filteredModels.length === 0
                         }
                       >
                         {testAllButtonLabel}
                       </Button>
-                      {!isImageEdit && successModels.length > 0 && (
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          onClick={handleSelectSuccessfulModels}
-                        >
-                          <CheckCircle2 data-icon='inline-start' />
-                          {t('Select successful models ({{count}})', {
-                            count: successModels.length,
-                          })}
-                        </Button>
-                      )}
-                      {!isImageEdit && failedModels.length > 0 && (
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          onClick={() => setIsDeleteFailedDialogOpen(true)}
-                        >
-                          <Trash2 data-icon='inline-start' />
-                          {t('Delete failed models ({{count}})', {
-                            count: failedModels.length,
-                          })}
-                        </Button>
-                      )}
+                      {!legacyImageActionsDisabled &&
+                        successModels.length > 0 && (
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={handleSelectSuccessfulModels}
+                          >
+                            <CheckCircle2 data-icon='inline-start' />
+                            {t('Select successful models ({{count}})', {
+                              count: successModels.length,
+                            })}
+                          </Button>
+                        )}
+                      {!legacyImageActionsDisabled &&
+                        failedModels.length > 0 && (
+                          <Button
+                            variant='outline'
+                            size='sm'
+                            onClick={() => setIsDeleteFailedDialogOpen(true)}
+                          >
+                            <Trash2 data-icon='inline-start' />
+                            {t('Delete failed models ({{count}})', {
+                              count: failedModels.length,
+                            })}
+                          </Button>
+                        )}
                     </>
                   )}
                 </div>
@@ -1312,7 +1489,9 @@ function ChannelTestDialogContent({
               <DataTablePagination table={table} />
             </div>
 
-            {!isImageEdit && <TestModelsBulkActions table={table} />}
+            {!legacyImageActionsDisabled && (
+              <TestModelsBulkActions table={table} />
+            )}
           </div>
         </div>
       </Dialog>
@@ -1333,13 +1512,22 @@ function ChannelTestDialogContent({
         open={pendingImageEditModel !== null}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) {
+            imageProbeAbortRef.current?.abort()
+            imageProbeAbortRef.current = null
             setPendingImageEditModel(null)
+            setImageProbeResult(null)
           }
         }}
-        title={t('Confirm paid Image Edit test')}
+        title={t(
+          isImageCapability
+            ? 'Confirm paid image capability probe'
+            : 'Confirm paid Image Edit test'
+        )}
         desc={t(
-          'This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.',
-          { model: pendingImageEditModel ?? '' }
+          isImageCapability
+            ? 'This sends exactly 1 paid upstream image request for model {{model}} and may return {{count}} images. Cancel sends 0 requests.'
+            : 'This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.',
+          { model: pendingImageEditModel ?? '', count: imageProbe.n }
         )}
         confirmText={t('Send one paid request')}
         handleConfirm={confirmImageEditTest}

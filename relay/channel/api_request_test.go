@@ -85,6 +85,105 @@ func TestDoFormRequestUsesMultipartAndRequestContext(t *testing.T) {
 	require.Equal(t, 1, requests)
 }
 
+func TestDoAPIRequestUsesJSONBodyAndRequestContext(t *testing.T) {
+	service.InitHttpClient()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Equal(t, []byte(`{"model":"gpt-image-2"}`), body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	resp, err := DoApiRequest(formRequestTestAdaptor{url: server.URL}, ctx, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}, bytes.NewBufferString(`{"model":"gpt-image-2"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, int32(1), requests.Load())
+}
+
+func TestDoAPIRequestContextFailureDoesNotRetryOrLeakSecrets(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		context func() (context.Context, context.CancelFunc)
+	}{
+		{name: "cancellation", context: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }},
+		{name: "deadline", context: func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 20*time.Millisecond)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service.InitHttpClient()
+			var requests atomic.Int32
+			started := make(chan struct{}, 1)
+			release := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				requests.Add(1)
+				started <- struct{}{}
+				<-release
+			}))
+			requestContext, cancel := test.context()
+			defer cancel()
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequestWithContext(requestContext, http.MethodPost, "/v1/images/generations", nil)
+			ctx.Request.Header.Set("X-Secret-Header", "secret-header")
+			var logs bytes.Buffer
+			common.LogWriterMu.Lock()
+			previousWriter := gin.DefaultErrorWriter
+			gin.DefaultErrorWriter = &logs
+			common.LogWriterMu.Unlock()
+			defer func() {
+				common.LogWriterMu.Lock()
+				gin.DefaultErrorWriter = previousWriter
+				common.LogWriterMu.Unlock()
+			}()
+			result := make(chan error, 1)
+			go func() {
+				_, err := DoApiRequest(formRequestTestAdaptor{url: server.URL + "/secret-path"}, ctx, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}, bytes.NewBufferString("secret-json-body"))
+				result <- err
+			}()
+			<-started
+			if test.name == "cancellation" {
+				cancel()
+			}
+			err := <-result
+			close(release)
+			server.Close()
+			require.Error(t, err)
+			require.ErrorContains(t, err, "do request failed")
+			var apiError *types.NewAPIError
+			require.True(t, errors.As(err, &apiError))
+			require.Equal(t, types.ErrorCodeDoRequestFailed, apiError.GetErrorCode())
+			require.Equal(t, int32(1), requests.Load())
+			for _, secret := range []string{"secret-path", "secret-json-body", "secret-header", "127.0.0.1"} {
+				require.NotContains(t, err.Error(), secret)
+				require.NotContains(t, logs.String(), secret)
+			}
+		})
+	}
+}
+
+func TestDoAPIRequestTransportFailureDoesNotLeakSecretsOrRetry(t *testing.T) {
+	service.InitHttpClient()
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("closed listener received a request") }))
+	closedURL := server.URL + "/secret-path?secret-query=1"
+	server.Close()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	ctx.Request.Header.Set("X-Secret-Header", "secret-header")
+	_, err := DoApiRequest(formRequestTestAdaptor{url: closedURL}, ctx, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}, bytes.NewBufferString("secret-json-body"))
+	require.Error(t, err)
+	var apiError *types.NewAPIError
+	require.True(t, errors.As(err, &apiError))
+	require.Equal(t, types.ErrorCodeDoRequestFailed, apiError.GetErrorCode())
+	for _, secret := range []string{"secret-path", "secret-query", "secret-json-body", "secret-header", "127.0.0.1"} {
+		require.NotContains(t, err.Error(), secret)
+	}
+}
+
 func TestDoFormRequestCancellationDoesNotSendTwiceOrLeakSecrets(t *testing.T) {
 	service.InitHttpClient()
 	var requests atomic.Int32
@@ -216,8 +315,6 @@ func TestDoFormRequestTransportFailureDoesNotLeakSecretsOrRetry(t *testing.T) {
 }
 
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -239,8 +336,6 @@ func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {
 }
 
 func TestProcessHeaderOverride_ChannelTestSkipsClientHeaderPlaceholder(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -263,8 +358,6 @@ func TestProcessHeaderOverride_ChannelTestSkipsClientHeaderPlaceholder(t *testin
 }
 
 func TestProcessHeaderOverride_NonTestKeepsClientHeaderPlaceholder(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -286,8 +379,6 @@ func TestProcessHeaderOverride_NonTestKeepsClientHeaderPlaceholder(t *testing.T)
 }
 
 func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -317,8 +408,6 @@ func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
 }
 
 func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -344,8 +433,6 @@ func TestProcessHeaderOverride_PassthroughSkipsAcceptEncoding(t *testing.T) {
 }
 
 func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.T) {
-	t.Parallel()
-
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
