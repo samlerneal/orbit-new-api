@@ -76,6 +76,10 @@ export function isImageCapabilityMode(channelId: number, endpointType: string) {
   )
 }
 
+export function isImageCapabilityCaseSelectable(state: string) {
+  return state !== 'LOCALLY_UNSAFE_TO_PROBE'
+}
+
 // ============================================================================
 // Query Keys
 // ============================================================================

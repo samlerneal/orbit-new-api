@@ -97,6 +97,7 @@ import {
   createChannelTestDispatch,
   createImageCapabilityProbeRequest,
   createChannelTestIdentityGuard,
+  isImageCapabilityCaseSelectable,
   isImageCapabilityMode,
   reduceImageCapabilityRun,
   isCurrentChannelTestGeneration,
@@ -124,6 +125,39 @@ type ChannelTestDialogContentProps = ChannelTestDialogProps & {
 
 type ModelRow = {
   model: string
+}
+
+export type ImageCapabilityManifestCase = {
+  id: string
+  request: ImageCapabilityRequest
+  state: string
+}
+
+export function ImageCapabilityCaseButton({
+  entry,
+  selectedCaseId,
+  onSelect,
+}: {
+  entry: ImageCapabilityManifestCase
+  selectedCaseId: string
+  onSelect: (request: ImageCapabilityRequest) => void
+}) {
+  const selectable = isImageCapabilityCaseSelectable(entry.state)
+  return (
+    <Button
+      type='button'
+      size='sm'
+      variant={selectedCaseId === entry.id ? 'default' : 'outline'}
+      className='h-6 px-2 text-xs'
+      disabled={!selectable}
+      aria-label={`${entry.id} ${entry.state}`}
+      onClick={() => {
+        if (selectable) onSelect(entry.request)
+      }}
+    >
+      {entry.id} {!selectable && `(${entry.state})`}
+    </Button>
+  )
 }
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'error'
@@ -394,6 +428,15 @@ function ChannelTestDialogContent({
   const isImageCapability = isImageCapabilityMode(
     currentChannelId,
     endpointType
+  )
+  const imageManifestCases = useMemo(
+    () =>
+      (
+        imageCapability?.data?.manifest as
+          | { cases?: ImageCapabilityManifestCase[] }
+          | undefined
+      )?.cases ?? [],
+    [imageCapability?.data?.manifest]
   )
 
   useEffect(() => {
@@ -771,6 +814,15 @@ function ChannelTestDialogContent({
     const model = pendingImageEditModel
     setPendingImageEditModel(null)
     if (model && isImageCapability) {
+      const selectedCase = imageManifestCases.find(
+        (entry) => entry.id === imageProbe.case_id
+      )
+      if (
+        !selectedCase ||
+        !isImageCapabilityCaseSelectable(selectedCase.state)
+      ) {
+        return
+      }
       const controller = new AbortController()
       imageProbeAbortRef.current = controller
       const capturedGeneration = modeGenerationRef.current
@@ -819,6 +871,7 @@ function ChannelTestDialogContent({
     endpointType,
     currentChannelId,
     imageProbe,
+    imageManifestCases,
     isImageCapability,
     pendingImageEditModel,
     testSingleModel,
@@ -1318,32 +1371,13 @@ function ChannelTestDialogContent({
               {imageCapability?.success ? (
                 <div className='mt-2 grid gap-2 text-xs'>
                   <div className='flex flex-wrap gap-1'>
-                    {(
-                      (
-                        imageCapability.data?.manifest as
-                          | {
-                              cases?: Array<{
-                                id: string
-                                request: ImageCapabilityRequest
-                              }>
-                            }
-                          | undefined
-                      )?.cases ?? []
-                    ).map((entry) => (
-                      <Button
+                    {imageManifestCases.map((entry) => (
+                      <ImageCapabilityCaseButton
                         key={entry.id}
-                        type='button'
-                        size='sm'
-                        variant={
-                          imageProbe.case_id === entry.id
-                            ? 'default'
-                            : 'outline'
-                        }
-                        className='h-6 px-2 text-xs'
-                        onClick={() => setImageProbe(entry.request)}
-                      >
-                        {entry.id}
-                      </Button>
+                        entry={entry}
+                        selectedCaseId={imageProbe.case_id}
+                        onSelect={setImageProbe}
+                      />
                     ))}
                   </div>
                   {Object.entries(

@@ -1,15 +1,21 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
+import { Window } from 'happy-dom'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+
 import {
   createChannelTestIdentityGuard,
   createChannelTestDispatch,
   createImageCapabilityProbeRequest,
+  isImageCapabilityCaseSelectable,
   isImageCapabilityMode,
   reduceImageCapabilityRun,
   isCurrentChannelTestGeneration,
   resetChannelTestModeState,
 } from '../../lib/channel-actions'
+import { ImageCapabilityCaseButton } from './channel-test-dialog'
 
 describe('Image Edit channel test dispatch', () => {
   test('only channel 1 image modes enter the manifest-only paid probe flow', () => {
@@ -17,6 +23,80 @@ describe('Image Edit channel test dispatch', () => {
     assert.equal(isImageCapabilityMode(1, 'image-edit'), true)
     assert.equal(isImageCapabilityMode(1, 'openai'), false)
     assert.equal(isImageCapabilityMode(2, 'image-generation'), false)
+  })
+  test('img-43 and img-44 are disabled before any paid dispatch', () => {
+    for (const entry of ['img-43', 'img-44']) {
+      assert.equal(
+        isImageCapabilityCaseSelectable('LOCALLY_UNSAFE_TO_PROBE'),
+        false,
+        entry
+      )
+      assert.deepEqual(
+        createChannelTestDispatch(
+          'gpt-image-2',
+          'image-generation',
+          false,
+          false,
+          true
+        ),
+        { kind: 'capability-required', model: 'gpt-image-2' }
+      )
+    }
+  })
+
+  test('DOM disables unsafe img-43/img-44 for mouse and keyboard selection', async () => {
+    const window = new Window()
+    Object.assign(globalThis, {
+      window,
+      document: window.document,
+      navigator: window.navigator,
+      HTMLElement: window.HTMLElement,
+      Event: window.Event,
+      KeyboardEvent: window.KeyboardEvent,
+      IS_REACT_ACT_ENVIRONMENT: true,
+    })
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    let selections = 0
+    const unsafeRequest = {
+      ...createImageCapabilityProbeRequest('generation'),
+      case_id: 'img-43',
+    }
+    await act(async () => {
+      root.render(
+        createElement(
+          'div',
+          null,
+          ...['img-43', 'img-44'].map((id) =>
+            createElement(ImageCapabilityCaseButton, {
+              key: id,
+              entry: {
+                id,
+                request: { ...unsafeRequest, case_id: id },
+                state: 'LOCALLY_UNSAFE_TO_PROBE',
+              },
+              selectedCaseId: '',
+              onSelect: () => {
+                selections += 1
+              },
+            })
+          )
+        )
+      )
+    })
+    for (const id of ['img-43', 'img-44']) {
+      const button = document.querySelector(
+        `[aria-label="${id} LOCALLY_UNSAFE_TO_PROBE"]`
+      ) as HTMLButtonElement
+      assert.ok(button.textContent?.includes('LOCALLY_UNSAFE_TO_PROBE'))
+      assert.equal(button.disabled, true)
+      button.click()
+      button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    }
+    assert.equal(selections, 0)
+    await act(async () => root.unmount())
+    host.remove()
   })
   test('server-matrix probe has one paid request and no free-form fields', () => {
     const probe = createImageCapabilityProbeRequest('edit')
