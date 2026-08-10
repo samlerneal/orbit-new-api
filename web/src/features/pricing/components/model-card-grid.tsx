@@ -25,6 +25,8 @@ import { Button } from '@/components/ui/button'
 import { getPerfMetricsSummary } from '@/features/performance-metrics/api'
 
 import { DEFAULT_PRICING_PAGE_SIZE, DEFAULT_TOKEN_UNIT } from '../constants'
+import { getPublicComparisonDisplayPlan } from '../lib/public-comparison'
+import { PUBLIC_COMPARISON_CATALOG } from '../public-comparison-catalog'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelCard } from './model-card'
 import type { ModelPerfBadgeData } from './model-perf-badge'
@@ -44,8 +46,6 @@ export function ModelCardGrid(props: ModelCardGridProps) {
   const [page, setPage] = useState(1)
   const pageSize = DEFAULT_PRICING_PAGE_SIZE
   const tokenUnit = props.tokenUnit ?? DEFAULT_TOKEN_UNIT
-  const totalPages = Math.max(1, Math.ceil(props.models.length / pageSize))
-  const currentPage = Math.min(page, totalPages)
 
   const perfQuery = useQuery({
     queryKey: ['perf-metrics-summary', 24],
@@ -54,11 +54,6 @@ export function ModelCardGrid(props: ModelCardGridProps) {
     retry: false,
   })
 
-  const pagedModels = useMemo(() => {
-    const start = (currentPage - 1) * pageSize
-    return props.models.slice(start, start + pageSize)
-  }, [currentPage, pageSize, props.models])
-
   const perfMap = useMemo(() => {
     const map = new Map<string, ModelPerfBadgeData>()
     for (const model of perfQuery.data?.data?.models ?? []) {
@@ -66,6 +61,23 @@ export function ModelCardGrid(props: ModelCardGridProps) {
     }
     return map
   }, [perfQuery.data])
+  const displayPlan = useMemo(
+    () =>
+      getPublicComparisonDisplayPlan(
+        props.models,
+        PUBLIC_COMPARISON_CATALOG,
+        page,
+        pageSize
+      ),
+    [page, pageSize, props.models]
+  )
+  const {
+    totalPages,
+    currentPage,
+    comparisonResults,
+    visibleGroups,
+    normalModels,
+  } = displayPlan
 
   if (props.models.length === 0) {
     return null
@@ -73,8 +85,38 @@ export function ModelCardGrid(props: ModelCardGridProps) {
 
   return (
     <div className='space-y-4 sm:space-y-5'>
+      {visibleGroups.map((group) => (
+        <section key={group.groupId} className='space-y-3'>
+          <div className='flex flex-wrap items-baseline gap-x-2 gap-y-1'>
+            <h2 className='text-base font-semibold'>{group.displayName}</h2>
+            <span className='text-muted-foreground text-sm'>
+              {t('Official price: 6%')}
+            </span>
+          </div>
+          <div className='grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3'>
+            {comparisonResults
+              .filter((result) => result.group.groupId === group.groupId)
+              .map((result) => (
+                <ModelCard
+                  key={result.model.id ?? result.model.model_name}
+                  model={result.model}
+                  comparison={result}
+                  tokenUnit={tokenUnit}
+                  priceRate={props.priceRate}
+                  usdExchangeRate={props.usdExchangeRate}
+                  showRechargePrice={props.showRechargePrice}
+                  selectedGroup={props.selectedGroup}
+                  perf={perfMap.get(result.model.model_name || '')}
+                  onClick={() =>
+                    props.onModelClick(result.model.model_name || '')
+                  }
+                />
+              ))}
+          </div>
+        </section>
+      ))}
       <div className='grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3'>
-        {pagedModels.map((model) => (
+        {normalModels.map((model) => (
           <ModelCard
             key={model.id ?? model.model_name}
             model={model}
@@ -102,7 +144,7 @@ export function ModelCardGrid(props: ModelCardGridProps) {
               type='button'
               variant='outline'
               size='sm'
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              onClick={() => setPage(Math.max(1, currentPage - 1))}
               disabled={currentPage <= 1}
               className='gap-1.5'
             >
@@ -113,9 +155,7 @@ export function ModelCardGrid(props: ModelCardGridProps) {
               type='button'
               variant='outline'
               size='sm'
-              onClick={() =>
-                setPage((current) => Math.min(totalPages, current + 1))
-              }
+              onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage >= totalPages}
               className='gap-1.5'
             >

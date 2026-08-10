@@ -55,6 +55,15 @@ export interface PricingColumnsOptions {
   selectedGroup?: string
 }
 
+export const PUBLIC_COMPARISON_COLUMN_KEYS = [
+  'Model',
+  'Input price',
+  'Output price',
+  'Cache create',
+  'Cache read',
+  'Savings',
+] as const
+
 export function usePricingColumns(
   options: PricingColumnsOptions = {}
 ): ColumnDef<PricingModel>[] {

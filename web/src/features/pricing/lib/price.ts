@@ -60,7 +60,7 @@ export function stripTrailingZeros(formatted: string): string {
  * Returns NaN when the required ratio field is missing/null so callers can
  * skip rendering that price type.
  */
-function calculateTokenPrice(
+export function calculateTokenPriceInUsd(
   model: PricingModel,
   type: PriceType,
   ratio: number
@@ -156,7 +156,7 @@ export function formatPrice(
 
   const displayGroupRatio = getDisplayGroupRatio(model, selectedGroup)
 
-  let priceInUSD = calculateTokenPrice(model, type, displayGroupRatio)
+  let priceInUSD = calculateTokenPriceInUsd(model, type, displayGroupRatio)
   priceInUSD = applyRechargeRate(
     priceInUSD,
     showWithRecharge,
@@ -190,7 +190,7 @@ export function formatGroupPrice(
   }
 
   const ratio = getConfiguredGroupRatio(groupRatio, group)
-  let priceInUSD = calculateTokenPrice(model, type, ratio)
+  let priceInUSD = calculateTokenPriceInUsd(model, type, ratio)
 
   priceInUSD = applyRechargeRate(
     priceInUSD,

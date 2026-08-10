@@ -5459,6 +5459,16 @@
     "Capability matrix unavailable": "能力矩阵不可用",
     "Image capability is unavailable for this channel.": "此渠道的图片能力不可用。",
     "Image probe completed.": "图片探测已完成。",
-    "Image probe failed.": "图片探测失败。"
+    "Image probe failed.": "图片探测失败。",
+    "Official price: 6%": "官方价格的 6%",
+    "Save about {{percent}}%": "节省约 {{percent}}%",
+    "Input price": "输入价格",
+    "Output price": "输出价格",
+    "Cache create": "缓存创建",
+    "Cache read": "缓存读取",
+    "Savings": "节省幅度",
+    "Not applicable": "不适用",
+    "Price source": "价格来源",
+    "Verified on {{date}}": "核验于 {{date}}"
   }
 }

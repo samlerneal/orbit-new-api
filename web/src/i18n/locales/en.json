@@ -5459,6 +5459,16 @@
     "Capability matrix unavailable": "Capability matrix unavailable",
     "Image capability is unavailable for this channel.": "Image capability is unavailable for this channel.",
     "Image probe completed.": "Image probe completed.",
-    "Image probe failed.": "Image probe failed."
+    "Image probe failed.": "Image probe failed.",
+    "Official price: 6%": "6% of official price",
+    "Save about {{percent}}%": "Save about {{percent}}%",
+    "Input price": "Input price",
+    "Output price": "Output price",
+    "Cache create": "Cache create",
+    "Cache read": "Cache read",
+    "Savings": "Savings",
+    "Not applicable": "Not applicable",
+    "Price source": "Price source",
+    "Verified on {{date}}": "Verified on {{date}}"
   }
 }

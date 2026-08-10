@@ -5318,6 +5318,16 @@
     "Capability matrix unavailable": "能力矩陣無法使用",
     "Image capability is unavailable for this channel.": "此渠道的圖片能力無法使用。",
     "Image probe completed.": "圖片探測已完成。",
-    "Image probe failed.": "圖片探測失敗。"
+    "Image probe failed.": "圖片探測失敗。",
+    "Official price: 6%": "官方價格的 6%",
+    "Save about {{percent}}%": "節省約 {{percent}}%",
+    "Input price": "輸入價格",
+    "Output price": "輸出價格",
+    "Cache create": "快取建立",
+    "Cache read": "快取讀取",
+    "Savings": "節省幅度",
+    "Not applicable": "不適用",
+    "Price source": "價格來源",
+    "Verified on {{date}}": "核驗於 {{date}}"
   }
 }

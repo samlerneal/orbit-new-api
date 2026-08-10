@@ -35,6 +35,11 @@ import {
 import { EXCLUDED_GROUPS, VIEW_MODES } from './constants'
 import { useFilters } from './hooks/use-filters'
 import { usePricingData } from './hooks/use-pricing-data'
+import {
+  canShowGroupComparison,
+  getPublicComparisonResults,
+} from './lib/public-comparison'
+import { PUBLIC_COMPARISON_CATALOG } from './public-comparison-catalog'
 
 export function Pricing() {
   const { t } = useTranslation()
@@ -104,6 +109,15 @@ export function Pricing() {
       ),
     [usableGroup]
   )
+  const hasPublicComparison = useMemo(() => {
+    const comparisonResults = getPublicComparisonResults(
+      models || [],
+      PUBLIC_COMPARISON_CATALOG
+    )
+    return PUBLIC_COMPARISON_CATALOG.some((group) =>
+      canShowGroupComparison(comparisonResults, group)
+    )
+  }, [models])
 
   const handleClearAll = useCallback(() => {
     clearFilters()
@@ -224,7 +238,10 @@ export function Pricing() {
               className='hover-scrollbar sticky top-4 hidden max-h-[calc(100dvh-2rem)] self-start overflow-y-auto xl:block'
             />
 
-            <main className='min-w-0 space-y-4'>
+            <main
+              className='min-w-0 space-y-4'
+              data-public-comparison={hasPublicComparison ? 'ready' : 'hidden'}
+            >
               <PricingToolbar
                 filteredCount={filteredModels.length}
                 totalCount={models?.length}

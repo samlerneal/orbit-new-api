@@ -127,6 +127,18 @@ const O029_ZH_VALUES: Record<string, string> = {
     '开始对话前，请确认账户余额充足或已有有效订阅；实际用量按账户权威账本结算。',
   'Public chat stored in this browser tab': '仅保存在当前标签页，刷新后清空',
 }
+const O022_PUBLIC_COMPARISON_KEYS = [
+  'Official price: 6%',
+  'Save about {{percent}}%',
+  'Input price',
+  'Output price',
+  'Cache create',
+  'Cache read',
+  'Savings',
+  'Not applicable',
+  'Price source',
+  'Verified on {{date}}',
+]
 
 const O021_LOCKED_PUBLIC_VALUES: Record<string, Record<string, string>> = {
   'zh.json': {
@@ -323,4 +335,23 @@ describe('O-029 public chat locale completeness', () => {
       assert.equal(translation[key], value, `zh.json: incorrect ${key}`)
     }
   })
+})
+
+describe('O-022 public comparison locale completeness', () => {
+  for (const filename of ['zh.json', 'zh-TW.json', 'en.json', 'ru.json']) {
+    test(`${filename} contains translated comparison labels`, () => {
+      const translation = loadLocale(filename).translation as Record<
+        string,
+        string
+      >
+      for (const key of O022_PUBLIC_COMPARISON_KEYS) {
+        assert.equal(
+          typeof translation[key],
+          'string',
+          `${filename}: missing ${key}`
+        )
+        assert.notEqual(translation[key], '', `${filename}: empty ${key}`)
+      }
+    })
+  }
 })

@@ -5318,6 +5318,16 @@
     "Capability matrix unavailable": "Матрица возможностей недоступна",
     "Image capability is unavailable for this channel.": "Возможности изображений недоступны для этого канала.",
     "Image probe completed.": "Проверка изображения завершена.",
-    "Image probe failed.": "Проверка изображения не удалась."
+    "Image probe failed.": "Проверка изображения не удалась.",
+    "Official price: 6%": "6% от официальной цены",
+    "Save about {{percent}}%": "Экономия около {{percent}}%",
+    "Input price": "Цена ввода",
+    "Output price": "Цена вывода",
+    "Cache create": "Создание кэша",
+    "Cache read": "Чтение кэша",
+    "Savings": "Экономия",
+    "Not applicable": "Неприменимо",
+    "Price source": "Источник цен",
+    "Verified on {{date}}": "Проверено {{date}}"
   }
 }

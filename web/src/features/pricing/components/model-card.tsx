@@ -32,6 +32,7 @@ import {
 import { parseTags } from '../lib/filters'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
+import type { PublicComparisonResult } from '../lib/public-comparison'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
@@ -45,6 +46,7 @@ export interface ModelCardProps {
   showRechargePrice?: boolean
   selectedGroup?: string
   perf?: ModelPerfBadgeData
+  comparison?: PublicComparisonResult
 }
 
 export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
@@ -66,6 +68,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     props.model.billing_mode === 'tiered_expr' &&
     Boolean(props.model.billing_expr)
   const hasCachedPrice = isTokenBased && props.model.cache_ratio != null
+  const comparison = props.comparison
   const dynamicSummary = isDynamicPricing
     ? getDynamicPricingSummary(props.model, {
         tokenUnit,
@@ -217,6 +220,14 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             <div className='mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm sm:mt-1 sm:gap-x-3'>
               {priceSummary}
             </div>
+            {comparison && (
+              <div className='text-muted-foreground mt-1 text-xs'>
+                {t('Official price: 6%')} ·{' '}
+                {t('Save about {{percent}}%', {
+                  percent: comparison.savingsPercent,
+                })}
+              </div>
+            )}
           </div>
         </div>
 
@@ -244,6 +255,35 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       <p className='text-muted-foreground mt-2 line-clamp-1 flex-1 text-[13px] leading-relaxed sm:mt-4 sm:line-clamp-2 sm:min-h-[2.5rem]'>
         {props.model.description || t('No description available.')}
       </p>
+
+      {comparison && (
+        <div className='text-muted-foreground mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs'>
+          <span>
+            {t('Input')}:{' '}
+            {comparison.salePrices.input?.toFixed(8).replace(/\.?0+$/, '')}
+          </span>
+          <span>
+            {t('Output')}:{' '}
+            {comparison.salePrices.output?.toFixed(8).replace(/\.?0+$/, '')}
+          </span>
+          <span>
+            {t('Cache create')}:{' '}
+            {comparison.salePrices.cacheCreate === null
+              ? t('Not applicable')
+              : comparison.salePrices.cacheCreate
+                  .toFixed(8)
+                  .replace(/\.?0+$/, '')}
+          </span>
+          <span>
+            {t('Cache read')}:{' '}
+            {comparison.salePrices.cacheRead === null
+              ? t('Not applicable')
+              : comparison.salePrices.cacheRead
+                  .toFixed(8)
+                  .replace(/\.?0+$/, '')}
+          </span>
+        </div>
+      )}
 
       {/* Footer: left metadata and right performance summary share row alignment */}
       <div className='mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-1 sm:mt-4'>
