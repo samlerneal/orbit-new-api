@@ -120,17 +120,41 @@ type imageProbeResultMeta struct {
 }
 
 func imageProbePresence(headers http.Header, body []byte) gin.H {
-	requestID := "NOT_PRESENT"
-	if headers.Get("X-Request-Id") != "" || headers.Get("X-Request-ID") != "" {
-		requestID = "OBSERVED"
+	return gin.H{
+		"request_id_present": headers.Get("X-Request-Id") != "" || headers.Get("X-Request-ID") != "",
+		"task_id_present":    headers.Get("X-Task-Id") != "" || headers.Get("X-Task-ID") != "" || gjson.GetBytes(body, "task_id").Exists(),
+		"usage_present":      gjson.GetBytes(body, "usage").Exists(),
+		"billable_present":   gjson.GetBytes(body, "billable").Exists(),
+		"cost_present":       gjson.GetBytes(body, "cost").Exists(),
 	}
-	presence := func(path string) string {
-		if gjson.GetBytes(body, path).Exists() {
-			return "OBSERVED"
-		}
-		return "NOT_PRESENT"
+}
+
+func imageProbeSafeErrorCode(code string) string {
+	if code == "IMAGE_PROBE_INVALID_MATRIX_REQUEST" {
+		return "IMAGE_PROBE_CASE_MISMATCH"
 	}
-	return gin.H{"request_id": requestID, "usage": presence("usage"), "billable": presence("billable"), "cost": presence("cost")}
+	switch code {
+	case "", "IMAGE_PROBE_INVALID_JSON", "IMAGE_PROBE_CASE_MISMATCH", "IMAGE_PROBE_CASE_NOT_IN_MANIFEST", "IMAGE_PROBE_LOCAL_RESPONSE_LIMIT", "IMAGE_PROBE_BUSY", "IMAGE_PROBE_LOCAL_PRECONDITION_FAILED", "IMAGE_PROBE_UPSTREAM_UNVERIFIED", "IMAGE_PROBE_RESPONSE_METADATA_MISMATCH", "IMAGE_PROBE_CANDIDATE_IDENTITY_MISMATCH":
+		return code
+	default:
+		return "IMAGE_PROBE_INTERNAL_ERROR"
+	}
+}
+
+func respondImageCapability(c *gin.Context, request imageCapabilityRequest, success bool, state, errorCode string, latency int64, data gin.H) {
+	response := gin.H{
+		"success":    success,
+		"case_id":    request.CaseID,
+		"state":      state,
+		"latency_ms": latency,
+	}
+	if code := imageProbeSafeErrorCode(errorCode); code != "" {
+		response["error_code"] = code
+	}
+	if data != nil {
+		response["data"] = data
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func decodeImageProbeConfig(decoded []byte) (image.Config, string, error) {
@@ -433,7 +457,7 @@ func RunImageCapability(c *gin.Context) {
 	}
 	request, err := decodeImageCapabilityRequest(c)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "error_code": err.Error()})
+		respondImageCapability(c, request, false, "UNVERIFIED", err.Error(), 0, nil)
 		return
 	}
 	caseState := "NOT_PROBED"
@@ -444,11 +468,11 @@ func RunImageCapability(c *gin.Context) {
 		}
 	}
 	if caseState == "LOCALLY_UNSAFE_TO_PROBE" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "state": "LOCALLY_UNSAFE_TO_PROBE", "error_code": "IMAGE_PROBE_LOCAL_RESPONSE_LIMIT"})
+		respondImageCapability(c, request, false, "LOCALLY_UNSAFE_TO_PROBE", "IMAGE_PROBE_LOCAL_RESPONSE_LIMIT", 0, nil)
 		return
 	}
 	if !imageCapabilityInFlight.CompareAndSwap(false, true) {
-		c.JSON(http.StatusOK, gin.H{"success": false, "error_code": "IMAGE_PROBE_BUSY"})
+		respondImageCapability(c, request, false, "UNVERIFIED", "IMAGE_PROBE_BUSY", 0, nil)
 		return
 	}
 	defer imageCapabilityInFlight.Store(false)
@@ -462,25 +486,25 @@ func RunImageCapability(c *gin.Context) {
 	started := time.Now()
 	testUserID, userErr := resolveChannelTestUserID(c)
 	if userErr != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "error_code": "IMAGE_PROBE_LOCAL_PRECONDITION_FAILED"})
+		respondImageCapability(c, request, false, "UNVERIFIED", "IMAGE_PROBE_LOCAL_PRECONDITION_FAILED", 0, nil)
 		return
 	}
 	result := testChannel(ctx, channel, testUserID, imageCapabilityModel, endpoint, false)
 	latency := time.Since(started).Milliseconds()
 	if result.localErr != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "state": "UNVERIFIED", "error_code": "IMAGE_PROBE_UPSTREAM_UNVERIFIED", "latency_ms": latency})
+		respondImageCapability(c, request, false, "UNVERIFIED", "IMAGE_PROBE_UPSTREAM_UNVERIFIED", latency, nil)
 		return
 	}
 	resultMeta := parseImageProbeResult(result.responseBody)
 	if !imageProbeMatchesExactCase(resultMeta, request) {
-		c.JSON(http.StatusOK, gin.H{"success": false, "state": "UNVERIFIED", "error_code": "IMAGE_PROBE_RESPONSE_METADATA_MISMATCH", "latency_ms": latency, "upstream_body_bytes": result.upstreamBodyBytes})
+		respondImageCapability(c, request, false, "UNVERIFIED", "IMAGE_PROBE_RESPONSE_METADATA_MISMATCH", latency, nil)
 		return
 	}
-	metadata := gin.H{"mode": request.Mode, "shape": request.Shape, "resolution": request.Resolution, "n": request.N, "quality": request.Quality, "format": request.Format, "background": request.Background, "reference_count": request.ReferenceCount, "actual_image_count": resultMeta.ActualImageCount, "upstream_body_bytes": result.upstreamBodyBytes, "dimensions": resultMeta.Dimensions, "result_format": resultMeta.Format}
+	metadata := gin.H{"mode": request.Mode, "shape": request.Shape, "resolution": request.Resolution, "n": request.N, "quality": request.Quality, "format": request.Format, "background": request.Background, "reference_count": request.ReferenceCount, "actual_image_count": resultMeta.ActualImageCount, "dimensions": resultMeta.Dimensions, "result_format": resultMeta.Format}
 	for key, value := range imageProbePresence(result.responseHeaders, result.responseBody) {
 		metadata[key] = value
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "state": "OBSERVED_SUPPORTED", "latency_ms": latency, "data": metadata})
+	respondImageCapability(c, request, true, "OBSERVED_SUPPORTED", "", latency, metadata)
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {

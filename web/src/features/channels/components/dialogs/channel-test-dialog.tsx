@@ -127,6 +127,11 @@ type ModelRow = {
   model: string
 }
 
+type PendingImageCapabilityRun = {
+  manifestHash: string
+  manifestRequest: ImageCapabilityRequest
+}
+
 export type ImageCapabilityManifestCase = {
   id: string
   request: ImageCapabilityRequest
@@ -157,6 +162,87 @@ export function ImageCapabilityCaseButton({
     >
       {entry.id} {!selectable && `(${entry.state})`}
     </Button>
+  )
+}
+
+export function ImageCapabilityCaseMatrix({
+  entries,
+  selected,
+  results,
+  inFlightCaseId,
+  isAnyRunInFlight,
+  onSelect,
+  onRequestRun,
+}: {
+  entries: ImageCapabilityManifestCase[]
+  selected: ImageCapabilityRequest
+  results: Record<string, ImageCapabilityResponse>
+  inFlightCaseId: string | null
+  isAnyRunInFlight: boolean
+  onSelect: (request: ImageCapabilityRequest) => void
+  onRequestRun: (request: ImageCapabilityRequest) => void
+}) {
+  const selectedEntry = entries.find((entry) => entry.id === selected.case_id)
+  const selectedResult = selected.case_id
+    ? results[selected.case_id]
+    : undefined
+  const selectedIsRunnable =
+    !!selectedEntry &&
+    isImageCapabilityCaseSelectable(selectedEntry.state) &&
+    !selectedResult &&
+    !isAnyRunInFlight &&
+    inFlightCaseId !== selected.case_id
+
+  return (
+    <div className='mt-2 grid gap-2 text-xs'>
+      <div className='flex flex-wrap gap-1'>
+        {entries.map((entry) => (
+          <ImageCapabilityCaseButton
+            key={entry.id}
+            entry={entry}
+            selectedCaseId={selected.case_id}
+            onSelect={onSelect}
+          />
+        ))}
+      </div>
+      {selectedEntry && (
+        <div aria-live='polite' className='rounded border p-2'>
+          <p className='font-medium'>Selected case: {selected.case_id}</p>
+          <p>
+            mode={selected.mode}; shape={selected.shape}; resolution=
+            {selected.resolution}; n={selected.n}; quality={selected.quality};
+            format={selected.format}; background={selected.background};
+            reference_count={selected.reference_count}
+          </p>
+          <Button
+            type='button'
+            size='sm'
+            className='mt-2'
+            disabled={!selectedIsRunnable}
+            onClick={() => onRequestRun(selected)}
+          >
+            Run current case
+          </Button>
+        </div>
+      )}
+      <div className='grid gap-1' aria-label='Image capability case results'>
+        {entries.map((entry) => {
+          const result = results[entry.id]
+          return (
+            <p key={entry.id} data-case-id={entry.id}>
+              {entry.id}: {result?.state ?? entry.state}
+              {result?.latency_ms !== undefined
+                ? `; latency_ms=${result.latency_ms}`
+                : ''}
+              {result?.error_code ? `; ${result.error_code}` : ''}
+              {result?.data
+                ? `; request_id_present=${result.data.request_id_present}; task_id_present=${result.data.task_id_present}; usage_present=${result.data.usage_present}; billable_present=${result.data.billable_present}; cost_present=${result.data.cost_present}`
+                : ''}
+            </p>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -384,6 +470,7 @@ function ChannelTestDialogContent({
     typeof toast.loading
   > | null>(null)
   const imageProbeAbortRef = useRef<AbortController | null>(null)
+  const imageProbeInFlightRef = useRef<Set<string>>(new Set())
   const [endpointType, setEndpointType] = useState('auto')
   const [isStreamTest, setIsStreamTest] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -406,10 +493,18 @@ function ChannelTestDialogContent({
   const [pendingImageEditModel, setPendingImageEditModel] = useState<
     string | null
   >(null)
+  const [pendingImageCapabilityRun, setPendingImageCapabilityRun] =
+    useState<PendingImageCapabilityRun | null>(null)
   const [imageCapability, setImageCapability] =
     useState<ImageCapabilityResponse | null>(null)
   const [imageProbeResult, setImageProbeResult] =
     useState<ImageCapabilityResponse | null>(null)
+  const [imageProbeResults, setImageProbeResults] = useState<
+    Record<string, ImageCapabilityResponse>
+  >({})
+  const [imageProbeInFlightCaseId, setImageProbeInFlightCaseId] = useState<
+    string | null
+  >(null)
   const [imageProbe, setImageProbe] = useState<ImageCapabilityRequest>(() =>
     createImageCapabilityProbeRequest('generation')
   )
@@ -436,6 +531,12 @@ function ChannelTestDialogContent({
           | { cases?: ImageCapabilityManifestCase[] }
           | undefined
       )?.cases ?? [],
+    [imageCapability?.data?.manifest]
+  )
+  const imageManifestHash = useMemo(
+    () =>
+      (imageCapability?.data?.manifest as { hash?: string } | undefined)
+        ?.hash ?? '',
     [imageCapability?.data?.manifest]
   )
 
@@ -500,8 +601,12 @@ function ChannelTestDialogContent({
     setIsDeletingFailed(false)
     setFailureDetails(null)
     setPendingImageEditModel(null)
+    setPendingImageCapabilityRun(null)
     setImageCapability(null)
     setImageProbeResult(null)
+    setImageProbeResults({})
+    setImageProbeInFlightCaseId(null)
+    imageProbeInFlightRef.current.clear()
     imageProbeAbortRef.current?.abort()
     imageProbeAbortRef.current = null
     setImageProbe(createImageCapabilityProbeRequest('generation'))
@@ -528,8 +633,12 @@ function ChannelTestDialogContent({
     setBatchProgress(resetState.batchProgress)
     setFailureDetails(resetState.failureDetails)
     setPendingImageEditModel(null)
+    setPendingImageCapabilityRun(null)
     setImageCapability(null)
     setImageProbeResult(null)
+    setImageProbeResults({})
+    setImageProbeInFlightCaseId(null)
+    imageProbeInFlightRef.current.clear()
     imageProbeAbortRef.current?.abort()
     imageProbeAbortRef.current = null
     setImageProbe(createImageCapabilityProbeRequest('generation'))
@@ -782,15 +891,8 @@ function ChannelTestDialogContent({
         isImageCapability
       )
       if (dispatch.kind === 'capability-required') {
-        if (model !== 'gpt-image-2' || !imageCapability?.success) {
-          toast.error(t('Image capability is unavailable for this channel.'))
-          return
-        }
-        if (!imageProbe.case_id) {
-          toast.error(t('Select a server manifest case before sending.'))
-          return
-        }
-        setPendingImageEditModel(model)
+        // Capability mode has one explicit send path in the server manifest
+        // matrix. Model rows intentionally cannot open a paid request.
         return
       }
       if (dispatch.kind === 'confirm-required') {
@@ -799,41 +901,50 @@ function ChannelTestDialogContent({
       }
       void testSingleModel(dispatch.model, false, true, dispatch.options)
     },
-    [
-      effectiveStreamTest,
-      endpointType,
-      imageCapability?.success,
-      imageProbe.case_id,
-      isImageCapability,
-      t,
-      testSingleModel,
-    ]
+    [effectiveStreamTest, endpointType, isImageCapability, testSingleModel]
   )
 
   const confirmImageEditTest = useCallback(() => {
-    const model = pendingImageEditModel
-    setPendingImageEditModel(null)
-    if (model && isImageCapability) {
+    const pendingRun = pendingImageCapabilityRun
+    if (pendingRun) {
+      setPendingImageCapabilityRun(null)
+      const snapshot = pendingRun.manifestRequest
       const selectedCase = imageManifestCases.find(
-        (entry) => entry.id === imageProbe.case_id
+        (entry) => entry.id === snapshot.case_id
       )
       if (
         !selectedCase ||
-        !isImageCapabilityCaseSelectable(selectedCase.state)
+        !pendingRun.manifestHash ||
+        pendingRun.manifestHash !== imageManifestHash ||
+        !isImageCapabilityCaseSelectable(selectedCase.state) ||
+        JSON.stringify(selectedCase.request) !== JSON.stringify(snapshot) ||
+        imageProbeInFlightRef.current.has(snapshot.case_id) ||
+        imageProbeInFlightRef.current.size > 0 ||
+        imageProbeResults[snapshot.case_id]
       ) {
         return
       }
+      imageProbeInFlightRef.current.add(snapshot.case_id)
+      setImageProbeInFlightCaseId(snapshot.case_id)
       const controller = new AbortController()
       imageProbeAbortRef.current = controller
       const capturedGeneration = modeGenerationRef.current
-      void runImageCapability(currentChannelId, imageProbe, {
+      void runImageCapability(currentChannelId, snapshot, {
         signal: controller.signal,
       })
         .then((response) => {
           if (capturedGeneration !== modeGenerationRef.current) return
-          const result = reduceImageCapabilityRun(imageProbe.case_id, response)
+          const caseId =
+            response.case_id === snapshot.case_id
+              ? response.case_id
+              : snapshot.case_id
+          const result = reduceImageCapabilityRun(caseId, response)
           setImageProbeResult(result.response)
-          updateTestResult(model, {
+          setImageProbeResults((current) => ({
+            ...current,
+            [caseId]: result.response,
+          }))
+          updateTestResult('gpt-image-2', {
             status: response.success ? 'success' : 'error',
             completedAt: Date.now(),
             responseTime: response.latency_ms,
@@ -842,19 +953,37 @@ function ChannelTestDialogContent({
         })
         .catch(() => {
           if (capturedGeneration === modeGenerationRef.current) {
-            updateTestResult(model, {
+            const response: ImageCapabilityResponse = {
+              success: false,
+              case_id: snapshot.case_id,
+              state: 'UNVERIFIED',
+              error_code: 'IMAGE_PROBE_UPSTREAM_UNVERIFIED',
+            }
+            setImageProbeResult(response)
+            setImageProbeResults((current) => ({
+              ...current,
+              [snapshot.case_id]: response,
+            }))
+            updateTestResult('gpt-image-2', {
               status: 'error',
               completedAt: Date.now(),
+              errorCode: response.error_code,
             })
           }
         })
         .finally(() => {
+          imageProbeInFlightRef.current.delete(snapshot.case_id)
           if (imageProbeAbortRef.current === controller) {
             imageProbeAbortRef.current = null
+          }
+          if (capturedGeneration === modeGenerationRef.current) {
+            setImageProbeInFlightCaseId(null)
           }
         })
       return
     }
+    const model = pendingImageEditModel
+    setPendingImageEditModel(null)
     if (model) {
       const dispatch = createChannelTestDispatch(
         model,
@@ -870,10 +999,11 @@ function ChannelTestDialogContent({
     effectiveStreamTest,
     endpointType,
     currentChannelId,
-    imageProbe,
     imageManifestCases,
-    isImageCapability,
+    imageManifestHash,
+    imageProbeResults,
     pendingImageEditModel,
+    pendingImageCapabilityRun,
     testSingleModel,
     updateTestResult,
   ])
@@ -1224,8 +1354,9 @@ function ChannelTestDialogContent({
       },
       {
         id: 'actions',
-        header: t('Actions'),
+        header: isImageCapability ? '' : t('Actions'),
         cell: ({ row }) => {
+          if (isImageCapability) return null
           const model = row.original.model
           const isTestingModel = testingModels.has(model)
 
@@ -1257,6 +1388,7 @@ function ChannelTestDialogContent({
     ],
     [
       defaultTestModel,
+      isImageCapability,
       isBatchTesting,
       legacyImageActionsDisabled,
       requestModelTest,
@@ -1369,17 +1501,27 @@ function ChannelTestDialogContent({
                 )}
               </p>
               {imageCapability?.success ? (
-                <div className='mt-2 grid gap-2 text-xs'>
-                  <div className='flex flex-wrap gap-1'>
-                    {imageManifestCases.map((entry) => (
-                      <ImageCapabilityCaseButton
-                        key={entry.id}
-                        entry={entry}
-                        selectedCaseId={imageProbe.case_id}
-                        onSelect={setImageProbe}
-                      />
-                    ))}
-                  </div>
+                <>
+                  <ImageCapabilityCaseMatrix
+                    entries={imageManifestCases}
+                    selected={imageProbe}
+                    results={imageProbeResults}
+                    inFlightCaseId={imageProbeInFlightCaseId}
+                    isAnyRunInFlight={imageProbeInFlightCaseId !== null}
+                    onSelect={setImageProbe}
+                    onRequestRun={(request) => {
+                      if (
+                        imageProbeInFlightRef.current.size > 0 ||
+                        imageProbeResults[request.case_id]
+                      ) {
+                        return
+                      }
+                      setPendingImageCapabilityRun({
+                        manifestHash: imageManifestHash,
+                        manifestRequest: { ...request },
+                      })
+                    }}
+                  />
                   {Object.entries(
                     (imageCapability.data?.axes as Record<string, unknown>) ??
                       {}
@@ -1394,7 +1536,7 @@ function ChannelTestDialogContent({
                       </div>
                     )
                   })}
-                </div>
+                </>
               ) : (
                 <p className='text-destructive mt-2 text-xs'>
                   {imageCapability?.error_code ??
@@ -1543,13 +1685,13 @@ function ChannelTestDialogContent({
         handleConfirm={handleDeleteFailedModels}
       />
       <ConfirmDialog
-        open={pendingImageEditModel !== null}
+        open={
+          pendingImageEditModel !== null || pendingImageCapabilityRun !== null
+        }
         onOpenChange={(nextOpen) => {
           if (!nextOpen) {
-            imageProbeAbortRef.current?.abort()
-            imageProbeAbortRef.current = null
             setPendingImageEditModel(null)
-            setImageProbeResult(null)
+            setPendingImageCapabilityRun(null)
           }
         }}
         title={t(
@@ -1561,9 +1703,20 @@ function ChannelTestDialogContent({
           isImageCapability
             ? 'This sends exactly 1 paid upstream image request for model {{model}} and may return {{count}} images. Cancel sends 0 requests.'
             : 'This sends one paid upstream Image Edit request for model {{model}}. The generated image will not be displayed or saved.',
-          { model: pendingImageEditModel ?? '', count: imageProbe.n }
+          {
+            model:
+              pendingImageCapabilityRun?.manifestRequest.model ??
+              pendingImageEditModel ??
+              '',
+            count: pendingImageCapabilityRun?.manifestRequest.n ?? imageProbe.n,
+          }
         )}
         confirmText={t('Send one paid request')}
+        isLoading={
+          pendingImageCapabilityRun !== null &&
+          imageProbeInFlightCaseId ===
+            pendingImageCapabilityRun.manifestRequest.case_id
+        }
         handleConfirm={confirmImageEditTest}
       />
       <FailureDetailsSheet

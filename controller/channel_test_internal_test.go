@@ -151,6 +151,7 @@ func TestRunImageCapabilityGenerationUsesOneControlledRequestAndReturnsBase64Met
 		assert.Equal(t, "png", payload["output_format"])
 		assert.Equal(t, "opaque", payload["background"])
 		w.Header().Set("X-Request-Id", "sensitive-request-id")
+		w.Header().Set("X-Task-Id", "sensitive-task-id")
 		_, _ = io.WriteString(w, `{"data":[{"b64_json":"`+encoded+`"}],"usage":{"input_tokens":1},"billable":true,"cost":5}`)
 	}))
 	defer server.Close()
@@ -179,22 +180,28 @@ func TestRunImageCapabilityGenerationUsesOneControlledRequestAndReturnsBase64Met
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/test/1/image-capability/run", bytes.NewReader(body))
 	RunImageCapability(ctx)
 	var response struct {
-		Success bool
-		State   string
-		Data    map[string]any
+		Success   bool
+		CaseID    string `json:"case_id"`
+		State     string
+		LatencyMS int64 `json:"latency_ms"`
+		Data      map[string]any
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success)
+	assert.Equal(t, request.CaseID, response.CaseID)
 	assert.Equal(t, "OBSERVED_SUPPORTED", response.State)
 	assert.Equal(t, float64(1), response.Data["actual_image_count"])
 	assert.Equal(t, []any{"1024x1024"}, response.Data["dimensions"])
 	assert.Equal(t, "png", response.Data["result_format"])
-	assert.Equal(t, "OBSERVED", response.Data["request_id"])
-	assert.Equal(t, "OBSERVED", response.Data["usage"])
-	assert.Equal(t, "OBSERVED", response.Data["billable"])
-	assert.Equal(t, "OBSERVED", response.Data["cost"])
+	assert.Equal(t, true, response.Data["request_id_present"])
+	assert.Equal(t, true, response.Data["task_id_present"])
+	assert.Equal(t, true, response.Data["usage_present"])
+	assert.Equal(t, true, response.Data["billable_present"])
+	assert.Equal(t, true, response.Data["cost_present"])
 	assert.NotContains(t, recorder.Body.String(), encoded)
 	assert.NotContains(t, recorder.Body.String(), "sensitive-request-id")
+	assert.NotContains(t, recorder.Body.String(), "sensitive-task-id")
+	assert.NotContains(t, recorder.Body.String(), "upstream_body_bytes")
 	assert.Equal(t, 1, requests)
 }
 
@@ -549,12 +556,27 @@ func TestImageProbeResultDetectsInlineWebPDimensions(t *testing.T) {
 	assert.Equal(t, "webp", meta.Format)
 }
 
-func TestImageProbePresenceReturnsStatesWithoutValues(t *testing.T) {
-	presence := imageProbePresence(http.Header{"X-Request-Id": []string{"secret-id"}}, []byte(`{"usage":{"x":1},"cost":7}`))
-	assert.Equal(t, "OBSERVED", presence["request_id"])
-	assert.Equal(t, "OBSERVED", presence["usage"])
-	assert.Equal(t, "NOT_PRESENT", presence["billable"])
+func TestImageProbePresenceReturnsBooleansWithoutValues(t *testing.T) {
+	presence := imageProbePresence(http.Header{"X-Request-Id": []string{"secret-id"}}, []byte(`{"task_id":"secret-task-id","usage":{"x":1},"cost":7}`))
+	assert.Equal(t, true, presence["request_id_present"])
+	assert.Equal(t, true, presence["task_id_present"])
+	assert.Equal(t, true, presence["usage_present"])
+	assert.Equal(t, false, presence["billable_present"])
+	assert.Equal(t, true, presence["cost_present"])
 	assert.NotContains(t, fmt.Sprint(presence), "secret-id")
+	assert.NotContains(t, fmt.Sprint(presence), "secret-task-id")
+	withoutIDs := imageProbePresence(http.Header{}, []byte(`{"usage":{}}`))
+	assert.Equal(t, false, withoutIDs["request_id_present"])
+	assert.Equal(t, false, withoutIDs["task_id_present"])
+}
+
+func TestImageCapabilityFailureResponseIsCaseScopedAndSanitized(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	request := imageCapabilityCases()[0].Request
+	respondImageCapability(ctx, request, false, "UNVERIFIED", "upstream body: secret", 7, nil)
+	assert.JSONEq(t, `{"success":false,"case_id":"img-01","state":"UNVERIFIED","latency_ms":7,"error_code":"IMAGE_PROBE_INTERNAL_ERROR"}`, recorder.Body.String())
+	assert.NotContains(t, recorder.Body.String(), "secret")
 }
 
 func TestImageCapabilityStrictJSONRejectsUnknownAndMissingFields(t *testing.T) {

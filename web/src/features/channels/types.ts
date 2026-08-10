@@ -216,10 +216,44 @@ export interface ImageCapabilityRequest {
 
 export interface ImageCapabilityResponse {
   success: boolean
-  error_code?: string
+  case_id?: string
+  error_code?: ImageCapabilityErrorCode
   state?: ImageCapabilityState
   latency_ms?: number
-  data?: Record<string, unknown>
+  data?: ImageCapabilityProbeMetadata
+}
+
+export type ImageCapabilityErrorCode =
+  | 'IMAGE_PROBE_INVALID_JSON'
+  | 'IMAGE_PROBE_CASE_MISMATCH'
+  | 'IMAGE_PROBE_CASE_NOT_IN_MANIFEST'
+  | 'IMAGE_PROBE_LOCAL_RESPONSE_LIMIT'
+  | 'IMAGE_PROBE_BUSY'
+  | 'IMAGE_PROBE_LOCAL_PRECONDITION_FAILED'
+  | 'IMAGE_PROBE_UPSTREAM_UNVERIFIED'
+  | 'IMAGE_PROBE_RESPONSE_METADATA_MISMATCH'
+  | 'IMAGE_PROBE_CANDIDATE_IDENTITY_MISMATCH'
+  | 'IMAGE_PROBE_INTERNAL_ERROR'
+
+export interface ImageCapabilityProbeMetadata {
+  mode: ImageCapabilityRequest['mode']
+  shape: ImageCapabilityRequest['shape']
+  resolution: ImageCapabilityRequest['resolution']
+  n: ImageCapabilityRequest['n']
+  quality: ImageCapabilityRequest['quality']
+  format: ImageCapabilityRequest['format']
+  background: ImageCapabilityRequest['background']
+  reference_count: ImageCapabilityRequest['reference_count']
+  actual_image_count: number
+  dimensions: string[]
+  result_format: string
+  request_id_present: boolean
+  task_id_present: boolean
+  usage_present: boolean
+  billable_present: boolean
+  cost_present: boolean
+  manifest?: unknown
+  axes?: unknown
 }
 
 export interface ChannelBalanceResponse {

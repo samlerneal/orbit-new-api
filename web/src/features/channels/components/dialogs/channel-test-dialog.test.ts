@@ -15,7 +15,11 @@ import {
   isCurrentChannelTestGeneration,
   resetChannelTestModeState,
 } from '../../lib/channel-actions'
-import { ImageCapabilityCaseButton } from './channel-test-dialog'
+import type { ImageCapabilityResponse } from '../../types'
+import {
+  ImageCapabilityCaseButton,
+  ImageCapabilityCaseMatrix,
+} from './channel-test-dialog'
 
 describe('Image Edit channel test dispatch', () => {
   test('only channel 1 image modes enter the manifest-only paid probe flow', () => {
@@ -95,6 +99,149 @@ describe('Image Edit channel test dispatch', () => {
       button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
     }
     assert.equal(selections, 0)
+    await act(async () => root.unmount())
+    host.remove()
+  })
+  test('DOM displays the selected server case and sends its exact frozen payload', async () => {
+    const window = new Window()
+    Object.assign(globalThis, {
+      window,
+      document: window.document,
+      navigator: window.navigator,
+      HTMLElement: window.HTMLElement,
+      Event: window.Event,
+      KeyboardEvent: window.KeyboardEvent,
+      IS_REACT_ACT_ENVIRONMENT: true,
+    })
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    const img01 = {
+      ...createImageCapabilityProbeRequest('generation'),
+      case_id: 'img-01',
+    }
+    const img02 = {
+      ...createImageCapabilityProbeRequest('edit'),
+      case_id: 'img-02',
+      resolution: '2K' as const,
+      n: 2 as const,
+      quality: 'high' as const,
+      format: 'webp' as const,
+      background: 'transparent' as const,
+      reference_count: 2 as const,
+    }
+    const img03 = { ...img01, case_id: 'img-03' }
+    const img04 = { ...img01, case_id: 'img-04' }
+    let selected = img01
+    let isAnyRunInFlight = false
+    const sent: (typeof img02)[] = []
+    const results: Record<string, ImageCapabilityResponse> = {
+      'img-03': {
+        success: true,
+        case_id: 'img-03',
+        state: 'OBSERVED_SUPPORTED',
+        latency_ms: 1,
+        data: {
+          mode: 'generation',
+          shape: 'square',
+          resolution: '1K',
+          n: 1,
+          quality: 'low',
+          format: 'png',
+          background: 'opaque',
+          reference_count: 0,
+          actual_image_count: 1,
+          dimensions: ['1024x1024'],
+          result_format: 'png',
+          request_id_present: true,
+          task_id_present: true,
+          usage_present: false,
+          billable_present: false,
+          cost_present: false,
+        },
+      },
+      'img-04': {
+        success: false,
+        case_id: 'img-04',
+        state: 'UNVERIFIED',
+        error_code: 'IMAGE_PROBE_UPSTREAM_UNVERIFIED',
+        data: {
+          mode: 'edit',
+          shape: 'square',
+          resolution: '2K',
+          n: 2,
+          quality: 'high',
+          format: 'webp',
+          background: 'transparent',
+          reference_count: 2,
+          actual_image_count: 0,
+          dimensions: [],
+          result_format: 'UNKNOWN',
+          request_id_present: true,
+          task_id_present: false,
+          usage_present: true,
+          billable_present: true,
+          cost_present: true,
+        },
+      },
+    }
+    const render = async () => {
+      await act(async () => {
+        root.render(
+          createElement(ImageCapabilityCaseMatrix, {
+            entries: [
+              { id: 'img-01', request: img01, state: 'NOT_PROBED' },
+              { id: 'img-02', request: img02, state: 'NOT_PROBED' },
+              { id: 'img-03', request: img03, state: 'NOT_PROBED' },
+              { id: 'img-04', request: img04, state: 'NOT_PROBED' },
+            ],
+            selected,
+            results,
+            inFlightCaseId: null,
+            isAnyRunInFlight,
+            onSelect: (request) => {
+              selected = request
+            },
+            onRequestRun: (request) => {
+              sent.push(request as typeof img02)
+              isAnyRunInFlight = true
+            },
+          })
+        )
+      })
+    }
+    await render()
+    assert.match(host.textContent ?? '', /Selected case: img-01/)
+    assert.match(
+      host.textContent ?? '',
+      /mode=generation; shape=square; resolution=1K; n=1; quality=low; format=png; background=opaque; reference_count=0/
+    )
+    assert.match(
+      host.textContent ?? '',
+      /img-03: OBSERVED_SUPPORTED; latency_ms=1; request_id_present=true; task_id_present=true/
+    )
+    assert.match(
+      host.textContent ?? '',
+      /img-04: UNVERIFIED; IMAGE_PROBE_UPSTREAM_UNVERIFIED; request_id_present=true; task_id_present=false/
+    )
+    ;([...host.querySelectorAll('button')] as HTMLButtonElement[])
+      .find((button) => button.textContent?.includes('Run current case'))
+      ?.click()
+    assert.deepEqual(sent, [img01])
+    await render()
+    ;(
+      document.querySelector(
+        '[aria-label="img-02 NOT_PROBED"]'
+      ) as HTMLButtonElement
+    ).click()
+    await render()
+    const blockedRun = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Run current case')
+    ) as HTMLButtonElement
+    assert.equal(blockedRun.disabled, true)
+    blockedRun.click()
+    blockedRun.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    assert.deepEqual(sent, [img01])
     await act(async () => root.unmount())
     host.remove()
   })
