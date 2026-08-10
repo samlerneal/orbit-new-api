@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ArrowUpDown, Check, Filter, Grid2X2, Table2 } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { ArrowUpDown, Check, Filter } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -40,27 +40,15 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
-import {
-  VIEW_MODES,
-  getSortLabels,
-  type SortOption,
-  type ViewMode,
-} from '../constants'
+import { getSortLabels, type SortOption } from '../constants'
 import type { PricingModel, PricingVendor, TokenUnit } from '../types'
 import { PricingSidebar } from './pricing-sidebar'
 
 type SegmentOption = {
   value: string
-  label?: string
-  icon?: React.ComponentType<{ className?: string }>
-  tooltip?: string
+  label: string
 }
 
 export interface PricingToolbarProps {
@@ -72,8 +60,6 @@ export interface PricingToolbarProps {
   onTokenUnitChange: (value: TokenUnit) => void
   showRechargePrice: boolean
   onRechargePriceChange: (value: boolean) => void
-  viewMode: ViewMode
-  onViewModeChange: (value: ViewMode) => void
   quotaTypeFilter: string
   endpointTypeFilter: string
   vendorFilter: string
@@ -107,38 +93,22 @@ function SegmentedControl(props: {
       className='bg-muted/60 inline-flex h-8 items-center rounded-lg border p-0.5'
     >
       {props.options.map((option) => {
-        const Icon = option.icon
         const isActive = option.value === props.value
-        const button = (
+        return (
           <button
             key={option.value}
             type='button'
             onClick={() => props.onChange(option.value)}
             aria-pressed={isActive}
             className={cn(
-              'inline-flex h-full items-center justify-center rounded-md text-xs font-medium transition-all',
-              Icon && !option.label ? 'w-7' : 'gap-1.5 px-3',
+              'inline-flex h-full items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium transition-all',
               isActive
                 ? 'bg-primary text-primary-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground'
             )}
           >
-            {Icon && <Icon className='size-3.5' />}
             {option.label}
           </button>
-        )
-
-        if (!option.tooltip) {
-          return button
-        }
-
-        return (
-          <Tooltip key={option.value}>
-            <TooltipTrigger render={button}></TooltipTrigger>
-            <TooltipContent side='bottom' className='text-xs'>
-              {option.tooltip}
-            </TooltipContent>
-          </Tooltip>
         )
       })}
     </div>
@@ -150,31 +120,24 @@ export function PricingToolbar(props: PricingToolbarProps) {
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
   const sortLabels = getSortLabels(t)
 
-  const handleTokenUnitChange = useCallback(
-    (value: string) => props.onTokenUnitChange(value as TokenUnit),
-    [props]
-  )
+  const handleTokenUnitChange = (value: string) =>
+    props.onTokenUnitChange(value as TokenUnit)
 
-  const handleViewModeChange = useCallback(
-    (value: string) => props.onViewModeChange(value as ViewMode),
-    [props]
-  )
-
-  const handleRechargePriceChange = useCallback(
-    (value: string) => props.onRechargePriceChange(value === 'recharge'),
-    [props]
-  )
+  const handleRechargePriceChange = (value: string) =>
+    props.onRechargePriceChange(value === 'recharge')
 
   return (
-    <div className='rounded-xl border p-3'>
+    <div className='rounded-xl border p-3' data-pricing-secondary-controls>
       <div className='flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between'>
         <div className='flex items-center gap-2'>
           <Button
             type='button'
             variant='outline'
             size='sm'
-            onClick={() => setMobileFiltersOpen(true)}
-            className='gap-1.5 xl:hidden'
+            onClick={() => setMobileFiltersOpen((open) => !open)}
+            aria-expanded={mobileFiltersOpen}
+            aria-controls='pricing-filter-drawer'
+            className='gap-1.5'
           >
             <Filter className='size-4' />
             {t('Filter')}
@@ -252,29 +215,12 @@ export function PricingToolbar(props: PricingToolbarProps) {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-
-          <SegmentedControl
-            options={[
-              {
-                value: VIEW_MODES.CARD,
-                icon: Grid2X2,
-                tooltip: t('Card view'),
-              },
-              {
-                value: VIEW_MODES.TABLE,
-                icon: Table2,
-                tooltip: t('Table view'),
-              },
-            ]}
-            value={props.viewMode}
-            onChange={handleViewModeChange}
-            ariaLabel={t('View mode')}
-          />
         </div>
       </div>
 
       <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
         <SheetContent
+          id='pricing-filter-drawer'
           side='right'
           className={sideDrawerContentClassName('sm:max-w-md')}
         >

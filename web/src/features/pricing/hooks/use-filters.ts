@@ -44,11 +44,8 @@ type FilterState = {
   rechargePrice?: boolean
 }
 
-function normalizeViewMode(value: unknown): ViewMode {
-  if (value === VIEW_MODES.TABLE) {
-    return VIEW_MODES.TABLE
-  }
-  return VIEW_MODES.CARD
+export function normalizeViewMode(_value: unknown): ViewMode {
+  return VIEW_MODES.TABLE
 }
 
 export function useFilters(models: PricingModel[]) {
@@ -126,11 +123,6 @@ export function useFilters(models: PricingModel[]) {
   const setTokenUnit = useCallback(
     (v: TokenUnit) =>
       updateFilters({ tokenUnit: v === DEFAULT_TOKEN_UNIT ? undefined : v }),
-    [updateFilters]
-  )
-  const setViewMode = useCallback(
-    (v: ViewMode) =>
-      updateFilters({ view: v === VIEW_MODES.CARD ? undefined : v }),
     [updateFilters]
   )
   const setShowRechargePrice = useCallback(
@@ -219,7 +211,6 @@ export function useFilters(models: PricingModel[]) {
     setEndpointTypeFilter,
     setTagFilter,
     setTokenUnit,
-    setViewMode,
     setShowRechargePrice,
     filteredModels,
     hasActiveFilters,
