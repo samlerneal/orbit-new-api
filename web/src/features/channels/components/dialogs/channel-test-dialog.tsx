@@ -105,12 +105,16 @@ import {
   formatResponseTime,
   handleTestChannel,
 } from '../../lib'
-import type {
-  Channel,
-  GetChannelsResponse,
-  ImageCapabilityRequest,
-  ImageCapabilityResponse,
-  SearchChannelsResponse,
+import {
+  createImageCapabilityProbeLifetime,
+  runImageCapabilityProbeStateMachine,
+  setupImageCapabilityProbeLifetime,
+  shouldStoreImageCapabilityProbeResult,
+  type Channel,
+  type GetChannelsResponse,
+  type ImageCapabilityRequest,
+  type ImageCapabilityResponse,
+  type SearchChannelsResponse,
 } from '../../types'
 import { useChannels } from '../channels-provider'
 
@@ -463,6 +467,9 @@ function ChannelTestDialogContent({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const currentChannelId = currentRow.id
+  const currentChannelIdRef = useRef(currentChannelId)
+  currentChannelIdRef.current = currentChannelId
+  const imageProbeLifetimeRef = useRef(createImageCapabilityProbeLifetime())
   const batchStopRequestedRef = useRef(false)
   const batchRunIdRef = useRef(0)
   const modeGenerationRef = useRef(0)
@@ -512,6 +519,14 @@ function ChannelTestDialogContent({
     pageIndex: 0,
     pageSize: 30,
   })
+
+  useEffect(() => {
+    return setupImageCapabilityProbeLifetime(
+      imageProbeLifetimeRef.current,
+      imageProbeAbortRef,
+      imageProbeInFlightRef.current
+    )
+  }, [])
   const endpointSelectItems = useMemo(
     () =>
       endpointTypeOptions.map((option) => ({
@@ -929,11 +944,20 @@ function ChannelTestDialogContent({
       const controller = new AbortController()
       imageProbeAbortRef.current = controller
       const capturedGeneration = modeGenerationRef.current
-      void runImageCapability(currentChannelId, snapshot, {
-        signal: controller.signal,
-      })
-        .then((response) => {
-          if (capturedGeneration !== modeGenerationRef.current) return
+      const capturedChannelId = currentChannelId
+      const isCurrentProbe = () =>
+        imageProbeLifetimeRef.current.isCurrent &&
+        shouldStoreImageCapabilityProbeResult(
+          capturedGeneration === modeGenerationRef.current,
+          capturedChannelId === currentChannelIdRef.current
+        )
+      void runImageCapabilityProbeStateMachine(
+        () =>
+          runImageCapability(currentChannelId, snapshot, {
+            signal: controller.signal,
+          }),
+        isCurrentProbe,
+        (response) => {
           const caseId =
             response.case_id === snapshot.case_id
               ? response.case_id
@@ -950,36 +974,33 @@ function ChannelTestDialogContent({
             responseTime: response.latency_ms,
             errorCode: response.error_code,
           })
-        })
-        .catch(() => {
-          if (capturedGeneration === modeGenerationRef.current) {
-            const response: ImageCapabilityResponse = {
-              success: false,
-              case_id: snapshot.case_id,
-              state: 'UNVERIFIED',
-              error_code: 'IMAGE_PROBE_UPSTREAM_UNVERIFIED',
-            }
-            setImageProbeResult(response)
-            setImageProbeResults((current) => ({
-              ...current,
-              [snapshot.case_id]: response,
-            }))
-            updateTestResult('gpt-image-2', {
-              status: 'error',
-              completedAt: Date.now(),
-              errorCode: response.error_code,
-            })
+        },
+        () => {
+          const response: ImageCapabilityResponse = {
+            success: false,
+            case_id: snapshot.case_id,
+            state: 'UNVERIFIED',
+            error_code: 'IMAGE_PROBE_CLIENT_REQUEST_FAILED',
           }
-        })
-        .finally(() => {
+          setImageProbeResult(response)
+          setImageProbeResults((current) => ({
+            ...current,
+            [snapshot.case_id]: response,
+          }))
+          updateTestResult('gpt-image-2', {
+            status: 'error',
+            completedAt: Date.now(),
+            errorCode: response.error_code,
+          })
+        },
+        () => {
           imageProbeInFlightRef.current.delete(snapshot.case_id)
           if (imageProbeAbortRef.current === controller) {
             imageProbeAbortRef.current = null
           }
-          if (capturedGeneration === modeGenerationRef.current) {
-            setImageProbeInFlightCaseId(null)
-          }
-        })
+          setImageProbeInFlightCaseId(null)
+        }
+      )
       return
     }
     const model = pendingImageEditModel

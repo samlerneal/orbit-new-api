@@ -231,9 +231,84 @@ export type ImageCapabilityErrorCode =
   | 'IMAGE_PROBE_BUSY'
   | 'IMAGE_PROBE_LOCAL_PRECONDITION_FAILED'
   | 'IMAGE_PROBE_UPSTREAM_UNVERIFIED'
+  | 'IMAGE_PROBE_REQUEST_BUILD_FAILED'
+  | 'IMAGE_PROBE_UPSTREAM_TRANSPORT_FAILED'
+  | 'IMAGE_PROBE_UPSTREAM_TIMEOUT'
+  | 'IMAGE_PROBE_UPSTREAM_AUTH_REJECTED'
+  | 'IMAGE_PROBE_UPSTREAM_RATE_LIMITED'
+  | 'IMAGE_PROBE_UPSTREAM_STATUS_REJECTED'
+  | 'IMAGE_PROBE_RESPONSE_LIMIT_EXCEEDED'
+  | 'IMAGE_PROBE_RESPONSE_READ_FAILED'
+  | 'IMAGE_PROBE_RESPONSE_INVALID'
+  | 'IMAGE_PROBE_RESULT_MISSING'
+  | 'IMAGE_PROBE_CLIENT_REQUEST_FAILED'
   | 'IMAGE_PROBE_RESPONSE_METADATA_MISMATCH'
   | 'IMAGE_PROBE_CANDIDATE_IDENTITY_MISMATCH'
   | 'IMAGE_PROBE_INTERNAL_ERROR'
+
+export function shouldStoreImageCapabilityProbeResult(
+  generationIsCurrent: boolean,
+  channelIdentityIsCurrent: boolean
+) {
+  return generationIsCurrent && channelIdentityIsCurrent
+}
+
+export interface ImageCapabilityProbeLifetime {
+  isCurrent: boolean
+}
+
+export function createImageCapabilityProbeLifetime(): ImageCapabilityProbeLifetime {
+  return { isCurrent: true }
+}
+
+export function activateImageCapabilityProbeLifetime(
+  lifetime: ImageCapabilityProbeLifetime
+) {
+  lifetime.isCurrent = true
+}
+
+export function invalidateImageCapabilityProbeLifetime(
+  lifetime: ImageCapabilityProbeLifetime,
+  controller: AbortController | null,
+  inFlightCases: Set<string>
+) {
+  lifetime.isCurrent = false
+  controller?.abort()
+  inFlightCases.clear()
+}
+
+export function setupImageCapabilityProbeLifetime(
+  lifetime: ImageCapabilityProbeLifetime,
+  abortRef: { current: AbortController | null },
+  inFlightCases: Set<string>
+) {
+  activateImageCapabilityProbeLifetime(lifetime)
+  return () => {
+    invalidateImageCapabilityProbeLifetime(
+      lifetime,
+      abortRef.current,
+      inFlightCases
+    )
+    abortRef.current = null
+  }
+}
+
+export async function runImageCapabilityProbeStateMachine<T>(
+  request: () => Promise<T>,
+  isCurrent: () => boolean,
+  onSuccess: (response: T) => void,
+  onFailure: () => void,
+  onFinally: () => void
+) {
+  try {
+    const response = await request()
+    if (isCurrent()) onSuccess(response)
+  } catch {
+    if (isCurrent()) onFailure()
+  } finally {
+    if (isCurrent()) onFinally()
+  }
+}
 
 export interface ImageCapabilityProbeMetadata {
   mode: ImageCapabilityRequest['mode']

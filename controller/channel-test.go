@@ -44,12 +44,38 @@ import (
 )
 
 type testResult struct {
-	context           *gin.Context
-	localErr          error
-	newAPIError       *types.NewAPIError
-	responseBody      []byte
-	upstreamBodyBytes int
-	responseHeaders   http.Header
+	context             *gin.Context
+	localErr            error
+	imageProbeErrorCode string
+	newAPIError         *types.NewAPIError
+	responseBody        []byte
+	upstreamBodyBytes   int
+	responseHeaders     http.Header
+}
+
+func imageProbeErrorCodeFor(isImageProbe bool, code string) string {
+	if !isImageProbe {
+		return ""
+	}
+	return code
+}
+
+func imageProbeTransportErrorCode(ctx context.Context, err error) string {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "IMAGE_PROBE_UPSTREAM_TIMEOUT"
+	}
+	return "IMAGE_PROBE_UPSTREAM_TRANSPORT_FAILED"
+}
+
+func imageProbeStatusErrorCode(statusCode int) string {
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "IMAGE_PROBE_UPSTREAM_AUTH_REJECTED"
+	case http.StatusTooManyRequests:
+		return "IMAGE_PROBE_UPSTREAM_RATE_LIMITED"
+	default:
+		return "IMAGE_PROBE_UPSTREAM_STATUS_REJECTED"
+	}
 }
 
 const (
@@ -134,11 +160,21 @@ func imageProbeSafeErrorCode(code string) string {
 		return "IMAGE_PROBE_CASE_MISMATCH"
 	}
 	switch code {
-	case "", "IMAGE_PROBE_INVALID_JSON", "IMAGE_PROBE_CASE_MISMATCH", "IMAGE_PROBE_CASE_NOT_IN_MANIFEST", "IMAGE_PROBE_LOCAL_RESPONSE_LIMIT", "IMAGE_PROBE_BUSY", "IMAGE_PROBE_LOCAL_PRECONDITION_FAILED", "IMAGE_PROBE_UPSTREAM_UNVERIFIED", "IMAGE_PROBE_RESPONSE_METADATA_MISMATCH", "IMAGE_PROBE_CANDIDATE_IDENTITY_MISMATCH":
+	case "", "IMAGE_PROBE_INVALID_JSON", "IMAGE_PROBE_CASE_MISMATCH", "IMAGE_PROBE_CASE_NOT_IN_MANIFEST", "IMAGE_PROBE_LOCAL_RESPONSE_LIMIT", "IMAGE_PROBE_BUSY", "IMAGE_PROBE_LOCAL_PRECONDITION_FAILED", "IMAGE_PROBE_UPSTREAM_UNVERIFIED", "IMAGE_PROBE_RESPONSE_METADATA_MISMATCH", "IMAGE_PROBE_CANDIDATE_IDENTITY_MISMATCH", "IMAGE_PROBE_REQUEST_BUILD_FAILED", "IMAGE_PROBE_UPSTREAM_TRANSPORT_FAILED", "IMAGE_PROBE_UPSTREAM_TIMEOUT", "IMAGE_PROBE_UPSTREAM_AUTH_REJECTED", "IMAGE_PROBE_UPSTREAM_RATE_LIMITED", "IMAGE_PROBE_UPSTREAM_STATUS_REJECTED", "IMAGE_PROBE_RESPONSE_LIMIT_EXCEEDED", "IMAGE_PROBE_RESPONSE_READ_FAILED", "IMAGE_PROBE_RESPONSE_INVALID", "IMAGE_PROBE_RESULT_MISSING", "IMAGE_PROBE_CLIENT_REQUEST_FAILED":
 		return code
 	default:
 		return "IMAGE_PROBE_INTERNAL_ERROR"
 	}
+}
+
+func imageProbeFailureResponseCode(result testResult) string {
+	if result.localErr == nil {
+		return ""
+	}
+	if result.imageProbeErrorCode == "" {
+		return "IMAGE_PROBE_INTERNAL_ERROR"
+	}
+	return imageProbeSafeErrorCode(result.imageProbeErrorCode)
 }
 
 func respondImageCapability(c *gin.Context, request imageCapabilityRequest, success bool, state, errorCode string, latency int64, data gin.H) {
@@ -492,7 +528,7 @@ func RunImageCapability(c *gin.Context) {
 	result := testChannel(ctx, channel, testUserID, imageCapabilityModel, endpoint, false)
 	latency := time.Since(started).Milliseconds()
 	if result.localErr != nil {
-		respondImageCapability(c, request, false, "UNVERIFIED", "IMAGE_PROBE_UPSTREAM_UNVERIFIED", latency, nil)
+		respondImageCapability(c, request, false, "UNVERIFIED", imageProbeFailureResponseCode(result), latency, nil)
 		return
 	}
 	resultMeta := parseImageProbeResult(result.responseBody)
@@ -582,7 +618,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	isImageProbe := constant.EndpointType(endpointType) == constant.EndpointTypeImageGeneration || isImageEditTest
 	probeRequest, hasProbeRequest := imageCapabilityRequestFromContext(ctx)
 	if isImageEditTest && (testModel == "" || isStream) {
-		return testResult{localErr: errors.New("image edit test requires an explicit model and stream=false")}
+		return testResult{localErr: errors.New("image edit test requires an explicit model and stream=false"), imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED")}
 	}
 
 	requestPath := "/v1/chat/completions"
@@ -646,7 +682,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 		for key, value := range formValues {
 			if err := writer.WriteField(key, value); err != nil {
-				return testResult{localErr: fmt.Errorf("build image edit test form: %w", err)}
+				return testResult{localErr: fmt.Errorf("build image edit test form: %w", err), imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED")}
 			}
 		}
 		referenceCount := 1
@@ -656,7 +692,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		for referenceIndex := 0; referenceIndex < referenceCount; referenceIndex++ {
 			imagePart, err := writer.CreateFormFile("image", fmt.Sprintf("test-image-%d.png", referenceIndex+1))
 			if err != nil {
-				return testResult{localErr: fmt.Errorf("build image edit test image: %w", err)}
+				return testResult{localErr: fmt.Errorf("build image edit test image: %w", err), imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED")}
 			}
 			pngImage := image.NewRGBA(image.Rect(0, 0, 512, 512))
 			fill := uint8(96 + referenceIndex*24)
@@ -666,11 +702,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 				}
 			}
 			if err := png.Encode(imagePart, pngImage); err != nil {
-				return testResult{localErr: fmt.Errorf("encode image edit test image: %w", err)}
+				return testResult{localErr: fmt.Errorf("encode image edit test image: %w", err), imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED")}
 			}
 		}
 		if err := writer.Close(); err != nil {
-			return testResult{localErr: fmt.Errorf("finalize image edit test form: %w", err)}
+			return testResult{localErr: fmt.Errorf("finalize image edit test form: %w", err), imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED")}
 		}
 		c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, &requestBody)
 		c.Request.Header.Set("Content-Type", writer.FormDataContentType())
@@ -681,8 +717,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	cache, err := model.GetUserCache(testUserID)
 	if err != nil {
 		return testResult{
-			localErr:    err,
-			newAPIError: nil,
+			localErr:            err,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+			newAPIError:         nil,
 		}
 	}
 	cache.WriteContext(c)
@@ -700,9 +737,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
 	if newAPIError != nil {
 		return testResult{
-			context:     c,
-			localErr:    newAPIError,
-			newAPIError: newAPIError,
+			context:             c,
+			localErr:            newAPIError,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+			newAPIError:         newAPIError,
 		}
 	}
 
@@ -760,7 +798,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	if isImageEditTest {
 		request, err = helper.GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesEdits)
 		if err != nil {
-			return testResult{context: c, localErr: err, newAPIError: types.NewError(err, types.ErrorCodeInvalidRequest)}
+			return testResult{context: c, localErr: err, imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"), newAPIError: types.NewError(err, types.ErrorCodeInvalidRequest)}
 		}
 	} else {
 		request = buildTestRequest(testModel, endpointType, channel, isStream)
@@ -773,9 +811,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewError(err, types.ErrorCodeGenRelayInfoFailed),
+			context:             c,
+			localErr:            err,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+			newAPIError:         types.NewError(err, types.ErrorCodeGenRelayInfoFailed),
 		}
 	}
 
@@ -785,18 +824,20 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	err = attachTestBillingRequestInput(info, request)
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewError(err, types.ErrorCodeJsonMarshalFailed),
+			context:             c,
+			localErr:            err,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+			newAPIError:         types.NewError(err, types.ErrorCodeJsonMarshalFailed),
 		}
 	}
 
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewError(err, types.ErrorCodeChannelModelMappedError),
+			context:             c,
+			localErr:            err,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+			newAPIError:         types.NewError(err, types.ErrorCodeChannelModelMappedError),
 		}
 	}
 
@@ -833,9 +874,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	priceData, err := helper.ModelPriceHelper(c, info, 0, request.GetTokenCountMeta())
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest)),
+			context:             c,
+			localErr:            err,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+			newAPIError:         types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest)),
 		}
 	}
 
@@ -861,9 +903,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			convertedRequest, err = adaptor.ConvertImageRequest(c, info, *imageReq)
 		} else {
 			return testResult{
-				context:     c,
-				localErr:    errors.New("invalid image request type"),
-				newAPIError: types.NewError(errors.New("invalid image request type"), types.ErrorCodeConvertRequestFailed),
+				context:             c,
+				localErr:            errors.New("invalid image request type"),
+				imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+				newAPIError:         types.NewError(errors.New("invalid image request type"), types.ErrorCodeConvertRequestFailed),
 			}
 		}
 	case relayconstant.RelayModeImagesEdits:
@@ -871,9 +914,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			convertedRequest, err = adaptor.ConvertImageRequest(c, info, *imageReq)
 		} else {
 			return testResult{
-				context:     c,
-				localErr:    errors.New("invalid image edit request type"),
-				newAPIError: types.NewError(errors.New("invalid image edit request type"), types.ErrorCodeConvertRequestFailed),
+				context:             c,
+				localErr:            errors.New("invalid image edit request type"),
+				imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+				newAPIError:         types.NewError(errors.New("invalid image edit request type"), types.ErrorCodeConvertRequestFailed),
 			}
 		}
 	case relayconstant.RelayModeRerank:
@@ -932,9 +976,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewError(err, types.ErrorCodeConvertRequestFailed),
+			context:             c,
+			localErr:            err,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+			newAPIError:         types.NewError(err, types.ErrorCodeConvertRequestFailed),
 		}
 	}
 	var requestBody io.Reader
@@ -942,16 +987,17 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	if isImageEditTest {
 		convertedBody, ok := convertedRequest.(*bytes.Buffer)
 		if !ok {
-			return testResult{context: c, localErr: errors.New("invalid image edit multipart conversion"), newAPIError: types.NewError(errors.New("invalid image edit multipart conversion"), types.ErrorCodeConvertRequestFailed)}
+			return testResult{context: c, localErr: errors.New("invalid image edit multipart conversion"), imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"), newAPIError: types.NewError(errors.New("invalid image edit multipart conversion"), types.ErrorCodeConvertRequestFailed)}
 		}
 		requestBody = convertedBody
 	} else {
 		jsonData, err = common.Marshal(convertedRequest)
 		if err != nil {
 			return testResult{
-				context:     c,
-				localErr:    err,
-				newAPIError: types.NewError(err, types.ErrorCodeJsonMarshalFailed),
+				context:             c,
+				localErr:            err,
+				imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+				newAPIError:         types.NewError(err, types.ErrorCodeJsonMarshalFailed),
 			}
 		}
 		requestBody = bytes.NewBuffer(jsonData)
@@ -977,9 +1023,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 				}
 			}
 			return testResult{
-				context:     c,
-				localErr:    err,
-				newAPIError: types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid),
+				context:             c,
+				localErr:            err,
+				imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_REQUEST_BUILD_FAILED"),
+				newAPIError:         types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid),
 			}
 		}
 	}
@@ -987,9 +1034,10 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError),
+			context:             c,
+			localErr:            err,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, imageProbeTransportErrorCode(ctx, err)),
+			newAPIError:         types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError),
 		}
 	}
 	var httpResp *http.Response
@@ -1002,21 +1050,21 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			}
 			if httpResp.ContentLength > maxResponseBytes {
 				_ = httpResp.Body.Close()
-				return testResult{context: c, localErr: errors.New("image response exceeds the allowed size"), newAPIError: types.NewError(errors.New("image response exceeds the allowed size"), types.ErrorCodeBadResponseBody)}
+				return testResult{context: c, localErr: errors.New("image response exceeds the allowed size"), imageProbeErrorCode: "IMAGE_PROBE_RESPONSE_LIMIT_EXCEEDED", newAPIError: types.NewError(errors.New("image response exceeds the allowed size"), types.ErrorCodeBadResponseBody)}
 			}
 			responseBody, readErr := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes+1))
 			_ = httpResp.Body.Close()
 			if readErr != nil {
-				return testResult{context: c, localErr: errors.New("failed to read image edit response"), newAPIError: types.NewError(errors.New("failed to read image edit response"), types.ErrorCodeReadResponseBodyFailed)}
+				return testResult{context: c, localErr: errors.New("failed to read image edit response"), imageProbeErrorCode: "IMAGE_PROBE_RESPONSE_READ_FAILED", newAPIError: types.NewError(errors.New("failed to read image edit response"), types.ErrorCodeReadResponseBodyFailed)}
 			}
 			if int64(len(responseBody)) > maxResponseBytes {
-				return testResult{context: c, localErr: errors.New("image edit response exceeds the allowed size"), newAPIError: types.NewError(errors.New("image edit response exceeds the allowed size"), types.ErrorCodeBadResponseBody)}
+				return testResult{context: c, localErr: errors.New("image edit response exceeds the allowed size"), imageProbeErrorCode: "IMAGE_PROBE_RESPONSE_LIMIT_EXCEEDED", newAPIError: types.NewError(errors.New("image edit response exceeds the allowed size"), types.ErrorCodeBadResponseBody)}
 			}
 			httpResp.Body = io.NopCloser(bytes.NewReader(responseBody))
 		}
 		if httpResp.StatusCode != http.StatusOK {
 			if isImageProbe {
-				return testResult{context: c, localErr: errors.New("image upstream request failed"), newAPIError: types.NewError(errors.New("image upstream request failed"), types.ErrorCodeBadResponse)}
+				return testResult{context: c, localErr: errors.New("image upstream request failed"), imageProbeErrorCode: imageProbeStatusErrorCode(httpResp.StatusCode), newAPIError: types.NewError(errors.New("image upstream request failed"), types.ErrorCodeBadResponse)}
 			}
 			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
 			common.SysError(fmt.Sprintf(
@@ -1039,37 +1087,44 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	usageA, respErr := adaptor.DoResponse(c, httpResp, info)
 	if respErr != nil {
 		return testResult{
-			context:     c,
-			localErr:    respErr,
-			newAPIError: respErr,
+			context:             c,
+			localErr:            respErr,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_RESPONSE_INVALID"),
+			newAPIError:         respErr,
 		}
 	}
 	usage, usageErr := coerceTestUsage(usageA, isStream, info.GetEstimatePromptTokens())
 	if usageErr != nil {
 		return testResult{
-			context:     c,
-			localErr:    usageErr,
-			newAPIError: types.NewOpenAIError(usageErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			context:             c,
+			localErr:            usageErr,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_RESPONSE_INVALID"),
+			newAPIError:         types.NewOpenAIError(usageErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
 		}
 	}
 	result := w.Result()
 	respBody, err := readTestResponseBody(result.Body, isStream)
 	if err != nil {
 		return testResult{
-			context:     c,
-			localErr:    err,
-			newAPIError: types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError),
+			context:             c,
+			localErr:            err,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_RESPONSE_READ_FAILED"),
+			newAPIError:         types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError),
 		}
 	}
 	if bodyErr := validateTestResponseBody(respBody, isStream); bodyErr != nil {
 		return testResult{
-			context:     c,
-			localErr:    bodyErr,
-			newAPIError: types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
+			context:             c,
+			localErr:            bodyErr,
+			imageProbeErrorCode: imageProbeErrorCodeFor(isImageProbe, "IMAGE_PROBE_RESPONSE_INVALID"),
+			newAPIError:         types.NewOpenAIError(bodyErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError),
 		}
 	}
+	if isImageProbe && !gjson.ValidBytes(respBody) {
+		return testResult{context: c, localErr: errors.New("invalid image response"), imageProbeErrorCode: "IMAGE_PROBE_RESPONSE_INVALID", newAPIError: types.NewError(errors.New("invalid image response"), types.ErrorCodeBadResponseBody)}
+	}
 	if isImageProbe && !isValidImageEditTestResponse(respBody) {
-		return testResult{context: c, localErr: errors.New("image response did not contain an image result"), newAPIError: types.NewError(errors.New("image response did not contain an image result"), types.ErrorCodeBadResponseBody)}
+		return testResult{context: c, localErr: errors.New("image response did not contain an image result"), imageProbeErrorCode: "IMAGE_PROBE_RESULT_MISSING", newAPIError: types.NewError(errors.New("image response did not contain an image result"), types.ErrorCodeBadResponseBody)}
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 

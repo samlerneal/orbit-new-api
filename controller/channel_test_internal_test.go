@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -577,6 +578,238 @@ func TestImageCapabilityFailureResponseIsCaseScopedAndSanitized(t *testing.T) {
 	respondImageCapability(ctx, request, false, "UNVERIFIED", "upstream body: secret", 7, nil)
 	assert.JSONEq(t, `{"success":false,"case_id":"img-01","state":"UNVERIFIED","latency_ms":7,"error_code":"IMAGE_PROBE_INTERNAL_ERROR"}`, recorder.Body.String())
 	assert.NotContains(t, recorder.Body.String(), "secret")
+}
+
+func TestImageProbeFailureCodesAreSanitizedAndClassifiedWithoutErrorText(t *testing.T) {
+	for statusCode, want := range map[int]string{
+		http.StatusUnauthorized: "IMAGE_PROBE_UPSTREAM_AUTH_REJECTED",
+	} {
+		assert.Equal(t, want, imageProbeStatusErrorCode(statusCode))
+	}
+	assert.Equal(t, "IMAGE_PROBE_UPSTREAM_TIMEOUT", imageProbeTransportErrorCode(context.Background(), context.DeadlineExceeded))
+	assert.Equal(t, "IMAGE_PROBE_UPSTREAM_TRANSPORT_FAILED", imageProbeTransportErrorCode(context.Background(), errors.New("transport secret")))
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	respondImageCapability(ctx, imageCapabilityCases()[0].Request, false, "UNVERIFIED", "IMAGE_PROBE_RESPONSE_READ_FAILED", 0, nil)
+	assert.Contains(t, recorder.Body.String(), "IMAGE_PROBE_RESPONSE_READ_FAILED")
+	assert.NotContains(t, recorder.Body.String(), "secret")
+	assert.Equal(t, "IMAGE_PROBE_INTERNAL_ERROR", imageProbeFailureResponseCode(testResult{localErr: errors.New("/internal/path stack secret")}))
+	assert.Equal(t, "IMAGE_PROBE_INTERNAL_ERROR", imageProbeFailureResponseCode(testResult{localErr: errors.New("secret"), imageProbeErrorCode: "unknown"}))
+	request := imageCapabilityCases()[0].Request
+	for _, code := range []string{"IMAGE_PROBE_REQUEST_BUILD_FAILED", "IMAGE_PROBE_UPSTREAM_TIMEOUT", "IMAGE_PROBE_UPSTREAM_TRANSPORT_FAILED"} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		respondImageCapability(ctx, request, false, "UNVERIFIED", imageProbeFailureResponseCode(testResult{localErr: errors.New("sensitive internal failure"), imageProbeErrorCode: code}), 0, nil)
+		assert.JSONEq(t, `{"success":false,"case_id":"img-01","state":"UNVERIFIED","latency_ms":0,"error_code":"`+code+`"}`, recorder.Body.String())
+		assert.NotContains(t, recorder.Body.String(), "sensitive")
+	}
+}
+
+func TestRunImageCapabilityProjectsLocalUpstreamStatusWithoutSensitiveValues(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	service.InitHttpClient()
+	const testUserID = 906
+	insertModelListUser(t, db, testUserID, "image-probe-status", "default")
+	originalRatios := ratio_setting.GetModelRatioCopy()
+	t.Cleanup(func() {
+		data, err := common.Marshal(originalRatios)
+		require.NoError(t, err)
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+	})
+	statusCode := http.StatusOK
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("X-Request-Id", "sensitive-request-id")
+		w.Header().Set("Retry-After", "sensitive-retry-after")
+		w.WriteHeader(statusCode)
+		_, _ = io.WriteString(w, "sensitive-upstream-body")
+	}))
+	defer server.Close()
+	baseURL := server.URL
+	channel := &model.Channel{Id: imageCapabilityCandidateID, Type: constant.ChannelTypeOpenAI, Name: "Codex", Key: "sensitive-test-key", BaseURL: &baseURL, Models: imageCapabilityModel, Group: "default", Status: common.ChannelStatusEnabled}
+	require.NoError(t, db.Create(channel).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: imageCapabilityModel, ChannelId: channel.Id, Enabled: true}).Error)
+	ratioMap := ratio_setting.GetModelRatioCopy()
+	ratioMap[imageCapabilityModel] = 1
+	ratioData, err := common.Marshal(ratioMap)
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(ratioData)))
+	body, err := json.Marshal(imageCapabilityCases()[0].Request)
+	require.NoError(t, err)
+	for code, want := range map[int]string{
+		http.StatusUnauthorized:    "IMAGE_PROBE_UPSTREAM_AUTH_REJECTED",
+		http.StatusForbidden:       "IMAGE_PROBE_UPSTREAM_AUTH_REJECTED",
+		http.StatusTooManyRequests: "IMAGE_PROBE_UPSTREAM_RATE_LIMITED",
+		http.StatusBadGateway:      "IMAGE_PROBE_UPSTREAM_STATUS_REJECTED",
+	} {
+		t.Run(want, func(t *testing.T) {
+			statusCode = code
+			requests = 0
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Params = gin.Params{{Key: "id", Value: "1"}}
+			ctx.Set("id", testUserID)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+			RunImageCapability(ctx)
+			assert.Equal(t, 1, requests)
+			assertImageProbeFailureJSON(t, recorder.Body.String(), want)
+		})
+	}
+}
+
+func assertImageProbeFailureJSON(t *testing.T, body string, wantCode string) {
+	t.Helper()
+	var response map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal([]byte(body), &response))
+	assert.Equal(t, map[string]struct{}{
+		"success": {}, "case_id": {}, "state": {}, "latency_ms": {}, "error_code": {},
+	}, func() map[string]struct{} {
+		keys := make(map[string]struct{}, len(response))
+		for key := range response {
+			keys[key] = struct{}{}
+		}
+		return keys
+	}())
+	assert.JSONEq(t, "false", string(response["success"]))
+	assert.JSONEq(t, `"img-01"`, string(response["case_id"]))
+	assert.JSONEq(t, `"UNVERIFIED"`, string(response["state"]))
+	assert.JSONEq(t, `"`+wantCode+`"`, string(response["error_code"]))
+	for _, sensitive := range []string{"prompt", "b64", "task", "request-id", "secret-key", "/internal/", "stack", "sensitive"} {
+		assert.NotContains(t, body, sensitive)
+	}
+}
+
+func TestImageProbeTestChannelClassifiesBuildTimeoutAndTransportFailures(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		timeout         bool
+		useTransportURL bool
+		configureRatios bool
+		wantCode        string
+		wantRequests    int
+	}{
+		{name: "build", wantCode: "IMAGE_PROBE_REQUEST_BUILD_FAILED", wantRequests: 0},
+		{name: "timeout", timeout: true, configureRatios: true, wantCode: "IMAGE_PROBE_UPSTREAM_TIMEOUT", wantRequests: 0},
+		{name: "transport", useTransportURL: true, configureRatios: true, wantCode: "IMAGE_PROBE_UPSTREAM_TRANSPORT_FAILED", wantRequests: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupModelListControllerTestDB(t)
+			require.NoError(t, db.AutoMigrate(&model.Log{}))
+			service.InitHttpClient()
+			insertModelListUser(t, db, 920, "image-probe-"+test.name, "default")
+			originalRatios := ratio_setting.GetModelRatioCopy()
+			t.Cleanup(func() {
+				data, err := common.Marshal(originalRatios)
+				require.NoError(t, err)
+				require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+			})
+			if test.configureRatios {
+				ratios := ratio_setting.GetModelRatioCopy()
+				ratios[imageCapabilityModel] = 1
+				data, err := common.Marshal(ratios)
+				require.NoError(t, err)
+				require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+			}
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				_, _ = io.WriteString(w, `{"data":[]}`)
+			}))
+			defer server.Close()
+			baseURL := server.URL
+			if test.useTransportURL {
+				baseURL = "http://127.0.0.1:1"
+			}
+			channel := &model.Channel{Type: constant.ChannelTypeOpenAI, Name: "image probe " + test.name, Key: "secret-key", BaseURL: &baseURL, Models: imageCapabilityModel, Group: "default", Status: common.ChannelStatusEnabled}
+			require.NoError(t, db.Create(channel).Error)
+			require.NoError(t, db.Create(&model.Ability{Group: "default", Model: imageCapabilityModel, ChannelId: channel.Id, Enabled: true}).Error)
+			request := imageCapabilityCases()[0].Request
+			testContext := context.Background()
+			if test.timeout {
+				var cancel context.CancelFunc
+				testContext, cancel = context.WithTimeout(testContext, 0)
+				defer cancel()
+			}
+			result := testChannel(context.WithValue(testContext, imageCapabilityContextKey{}, request), channel, 920, imageCapabilityModel, string(constant.EndpointTypeImageGeneration), false)
+			require.Error(t, result.localErr)
+			assert.Equal(t, test.wantCode, imageProbeFailureResponseCode(result))
+			assert.Equal(t, test.wantRequests, requests)
+		})
+	}
+}
+
+func TestRunImageCapabilityProjectsResponseFailuresWithoutSensitiveValues(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		write    func(http.ResponseWriter)
+		wantCode string
+	}{
+		{
+			name: "response-limit",
+			write: func(w http.ResponseWriter) {
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", (64<<20)+1))
+				_, _ = io.WriteString(w, "sensitive-large-body")
+			},
+			wantCode: "IMAGE_PROBE_RESPONSE_LIMIT_EXCEEDED",
+		},
+		{
+			name: "invalid-response",
+			write: func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, "sensitive-invalid-json")
+			},
+			wantCode: "IMAGE_PROBE_RESPONSE_INVALID",
+		},
+		{
+			name: "missing-result",
+			write: func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"data":[],"usage":{}}`)
+			},
+			wantCode: "IMAGE_PROBE_RESULT_MISSING",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupModelListControllerTestDB(t)
+			require.NoError(t, db.AutoMigrate(&model.Log{}))
+			service.InitHttpClient()
+			insertModelListUser(t, db, 921, "image-probe-response-"+test.name, "default")
+			originalRatios := ratio_setting.GetModelRatioCopy()
+			t.Cleanup(func() {
+				data, err := common.Marshal(originalRatios)
+				require.NoError(t, err)
+				require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(data)))
+			})
+			ratios := ratio_setting.GetModelRatioCopy()
+			ratios[imageCapabilityModel] = 1
+			ratioData, err := common.Marshal(ratios)
+			require.NoError(t, err)
+			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(ratioData)))
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				require.Equal(t, "/v1/images/generations", r.URL.Path)
+				test.write(w)
+			}))
+			defer server.Close()
+			baseURL := server.URL
+			channel := &model.Channel{Id: imageCapabilityCandidateID, Type: constant.ChannelTypeOpenAI, Name: "Codex", Key: "secret-key", BaseURL: &baseURL, Models: imageCapabilityModel, Group: "default", Status: common.ChannelStatusEnabled}
+			require.NoError(t, db.Create(channel).Error)
+			require.NoError(t, db.Create(&model.Ability{Group: "default", Model: imageCapabilityModel, ChannelId: channel.Id, Enabled: true}).Error)
+			body, err := common.Marshal(imageCapabilityCases()[0].Request)
+			require.NoError(t, err)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Params = gin.Params{{Key: "id", Value: "1"}}
+			ctx.Set("id", 921)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+			RunImageCapability(ctx)
+			assert.Equal(t, 1, requests)
+			assertImageProbeFailureJSON(t, recorder.Body.String(), test.wantCode)
+		})
+	}
 }
 
 func TestImageCapabilityStrictJSONRejectsUnknownAndMissingFields(t *testing.T) {
