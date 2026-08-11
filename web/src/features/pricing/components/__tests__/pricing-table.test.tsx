@@ -15,7 +15,11 @@ import {
 } from '../../lib/public-comparison'
 import { PUBLIC_COMPARISON_CATALOG } from '../../public-comparison-catalog'
 import type { PricingModel } from '../../types'
-import { PricingTable, PublicComparisonModelCell } from '../pricing-table'
+import {
+  ComparisonSavingsBadge,
+  PricingTable,
+  PublicComparisonModelCell,
+} from '../pricing-table'
 
 let container: HTMLDivElement
 let root: Root
@@ -199,7 +203,30 @@ describe('public pricing table model cells', () => {
       'Official price¥45.00',
       'Official price¥3.60',
     ])
-    assert.match(solRow.textContent ?? '', /Save about 94%/)
+    assert.match(solRow.textContent ?? '', /Save 94%/)
+    const sitePriceValues = solRow.querySelectorAll('[data-site-price-value]')
+    assert.equal(sitePriceValues.length, 4)
+    for (const price of sitePriceValues) {
+      assert.match(price.className, /text-amber-/)
+      assert.match(price.className, /font-bold/)
+    }
+    const officialPriceValues = solRow.querySelectorAll(
+      '[data-official-price-value]'
+    )
+    assert.equal(officialPriceValues.length, 4)
+    for (const price of officialPriceValues) {
+      assert.match(price.className, /line-through/)
+    }
+    assert.doesNotMatch(
+      solRow.querySelector('[data-official-price]')?.firstElementChild
+        ?.className ?? '',
+      /line-through/
+    )
+    const savingsBadge = solRow.querySelector('[data-pricing-savings-badge]')
+    assert.ok(savingsBadge)
+    assert.match(savingsBadge.className, /bg-emerald-/)
+    assert.match(savingsBadge.className, /border-emerald-/)
+    assert.match(savingsBadge.textContent ?? '', /Save 94%/)
     assert.doesNotMatch(table.textContent ?? '', /NaN/)
 
     await click(solRow)
@@ -221,7 +248,19 @@ describe('public pricing table model cells', () => {
     assert.equal(table.querySelectorAll('th').length, 6)
     assert.equal(table.querySelectorAll('tbody tr').length, 1)
     assert.doesNotMatch(container.textContent ?? '', /Official price: 6%/)
-    assert.doesNotMatch(container.textContent ?? '', /Save about 94%/)
+    assert.doesNotMatch(container.textContent ?? '', /Save 94%/)
+  })
+
+  test('derives the savings badge from the comparison result instead of a fixed value', async () => {
+    await act(async () => {
+      root.render(createElement(ComparisonSavingsBadge, { savingsPercent: 92 }))
+    })
+
+    const badge = container.querySelector('[data-pricing-savings-badge]')
+    assert.ok(badge)
+    assert.match(badge.className, /border-emerald-/)
+    assert.match(badge.textContent ?? '', /Save 92%/)
+    assert.doesNotMatch(badge.textContent ?? '', /94%/)
   })
 
   test('fails a partially invalid five-model group closed without dropping rows', async () => {
@@ -233,13 +272,17 @@ describe('public pricing table model cells', () => {
     assert.ok(table)
     assert.equal(table.querySelectorAll('tbody tr').length, 5)
     assert.doesNotMatch(container.textContent ?? '', /6% of official price/)
-    assert.doesNotMatch(container.textContent ?? '', /Save about 94%/)
+    assert.doesNotMatch(container.textContent ?? '', /Save 94%/)
     assert.doesNotMatch(container.textContent ?? '', /NaN/)
     const gpt55 = table.querySelector('[data-model-name="gpt-5.5"]')
     assert.ok(gpt55)
     assert.match(
       gpt55.querySelectorAll('td')[3]?.textContent ?? '',
       /Not applicable/
+    )
+    assert.equal(
+      gpt55.querySelectorAll('[data-official-price-value]').length,
+      3
     )
   })
 

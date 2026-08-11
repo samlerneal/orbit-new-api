@@ -20,6 +20,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'
+import { Footer } from '@/components/layout/components/footer'
 import { PageTransition } from '@/components/page-transition'
 
 import { LoadingSkeleton, PricingTable, ModelDetailsDrawer } from './components'
@@ -146,7 +147,10 @@ export function PricingCatalogLayout(props: PricingCatalogLayoutProps) {
 
   return (
     <div className='max-w-full min-w-0 space-y-5' data-pricing-page>
-      <header className='space-y-2' data-pricing-block='title'>
+      <header
+        className='mx-auto max-w-3xl space-y-2 text-center'
+        data-pricing-block='title'
+      >
         <h1 className='text-3xl font-bold tracking-tight sm:text-4xl'>
           {t('Model pricing')}
         </h1>
@@ -243,6 +247,7 @@ export function Pricing() {
           />
         )}
       </PageTransition>
+      <Footer />
     </PublicLayout>
   )
 }
