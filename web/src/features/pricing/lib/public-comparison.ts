@@ -16,15 +16,21 @@ import { calculateTokenPriceInUsd } from './price'
 
 const RATIO_TOLERANCE = 0.000001
 
+export type PublicPriceDimension =
+  | 'input'
+  | 'output'
+  | 'cacheCreate'
+  | 'cacheRead'
+
+type PublicPrices = Record<PublicPriceDimension, number | null>
+
 export type PublicComparisonResult = {
   group: PublicComparisonGroup
   catalogModel: PublicComparisonModel
   model: PricingModel
   savingsPercent: number
-  salePrices: Record<
-    'input' | 'output' | 'cacheCreate' | 'cacheRead',
-    number | null
-  >
+  salePrices: PublicPrices
+  officialPrices: PublicPrices
 }
 
 export type PublicComparisonDisplayPlan = {
@@ -40,6 +46,29 @@ function isOfficialPrice(
   value: OfficialPriceDimension
 ): value is Exclude<OfficialPriceDimension, 'not_applicable'> {
   return value !== 'not_applicable'
+}
+
+function getOfficialPriceInUsd(value: OfficialPriceDimension): number | null {
+  if (!isOfficialPrice(value)) return null
+  const amount = Number(value.amount)
+  return Number.isFinite(amount) && amount > 0 ? amount : null
+}
+
+export function convertUsdToCny(
+  value: number | null,
+  usdExchangeRate: number
+): number | null {
+  if (
+    value === null ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    !Number.isFinite(usdExchangeRate) ||
+    usdExchangeRate <= 0
+  ) {
+    return null
+  }
+  const valueInCny = value * usdExchangeRate
+  return Number.isFinite(valueInCny) && valueInCny > 0 ? valueInCny : null
 }
 
 function calculateApplicableSalePrice(
@@ -137,6 +166,16 @@ export function getPublicComparisonResults(
               catalogModel.officialPrices.cacheRead,
               model,
               'cache'
+            ),
+          },
+          officialPrices: {
+            input: getOfficialPriceInUsd(catalogModel.officialPrices.input),
+            output: getOfficialPriceInUsd(catalogModel.officialPrices.output),
+            cacheCreate: getOfficialPriceInUsd(
+              catalogModel.officialPrices.cacheCreate
+            ),
+            cacheRead: getOfficialPriceInUsd(
+              catalogModel.officialPrices.cacheRead
             ),
           },
         },

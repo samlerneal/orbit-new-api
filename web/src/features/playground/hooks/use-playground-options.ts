@@ -42,9 +42,9 @@ import { toast } from 'sonner'
 import { getUserGroups, getUserModels } from '../api'
 import {
   getGroupFallback,
-  getModelFallback,
   getOptionLoadErrorMessage,
-  shouldClearModelForGroup,
+  resolveModelOptions,
+  type ModelOptionProjection,
 } from '../lib'
 import type { GroupOption, ModelOption, PlaygroundConfig } from '../types'
 
@@ -53,6 +53,7 @@ type UsePlaygroundOptionsParams = {
   currentModel: string
   setGroups: (groups: GroupOption[]) => void
   setModels: (models: ModelOption[]) => void
+  projectModels?: ModelOptionProjection
   updateConfig: <K extends keyof PlaygroundConfig>(
     key: K,
     value: PlaygroundConfig[K]
@@ -64,6 +65,7 @@ export function usePlaygroundOptions({
   currentModel,
   setGroups,
   setModels,
+  projectModels,
   updateConfig,
 }: UsePlaygroundOptionsParams) {
   const { t } = useTranslation()
@@ -113,18 +115,16 @@ export function usePlaygroundOptions({
   useEffect(() => {
     if (!modelsData) return
 
-    setModels(modelsData)
-    const fallback = getModelFallback(modelsData, currentModel)
-
-    if (fallback) {
-      updateConfig('model', fallback)
-      return
+    const resolved = resolveModelOptions(
+      modelsData,
+      currentModel,
+      projectModels
+    )
+    setModels(resolved.models)
+    if (resolved.nextModel !== null) {
+      updateConfig('model', resolved.nextModel)
     }
-
-    if (shouldClearModelForGroup(modelsData, currentModel)) {
-      updateConfig('model', '')
-    }
-  }, [modelsData, currentModel, setModels, updateConfig])
+  }, [modelsData, currentModel, projectModels, setModels, updateConfig])
 
   useEffect(() => {
     if (!groupsData) return

@@ -43,6 +43,12 @@ function comparisonResult(index: number): PublicComparisonResult {
       cacheCreate: 0.375,
       cacheRead: 0.03,
     },
+    officialPrices: {
+      input: 5,
+      output: 30,
+      cacheCreate: 6.25,
+      cacheRead: 0.5,
+    },
   }
 }
 
@@ -87,7 +93,7 @@ async function renderTable(
       createElement(PricingTable, {
         models,
         groups: PUBLIC_COMPARISON_CATALOG,
-        vendorName: 'OpenAI',
+        usdExchangeRate: 7.2,
         onModelClick,
       })
     )
@@ -124,7 +130,7 @@ beforeEach(async () => {
         PUBLIC_COMPARISON_CATALOG[0].models.map((_model, index) =>
           createElement(PublicComparisonModelCell, {
             key: index,
-            result: comparisonResult(index),
+            model: comparisonResult(index).model,
           })
         )
       )
@@ -158,7 +164,7 @@ describe('public pricing table model cells', () => {
         'Model',
         'Input price',
         'Output price',
-        'Cache create',
+        'Cache write',
         'Cache read',
         'Savings',
       ]
@@ -175,10 +181,24 @@ describe('public pricing table model cells', () => {
 
     const solRow = table.querySelector('[data-model-name="gpt-5.6-sol"]')
     assert.ok(solRow)
-    assert.match(solRow.textContent ?? '', /\$0\.30/)
-    assert.match(solRow.textContent ?? '', /\$1\.80/)
-    assert.match(solRow.textContent ?? '', /\$0\.375/)
-    assert.match(solRow.textContent ?? '', /\$0\.03/)
+    const sitePrices = [...solRow.querySelectorAll('[data-site-price]')].map(
+      (cell) => cell.textContent?.trim()
+    )
+    const officialPrices = [
+      ...solRow.querySelectorAll('[data-official-price]'),
+    ].map((cell) => cell.textContent?.trim())
+    assert.deepEqual(sitePrices, [
+      'Site price¥2.16',
+      'Site price¥12.96',
+      'Site price¥2.70',
+      'Site price¥0.216',
+    ])
+    assert.deepEqual(officialPrices, [
+      'Official price¥36.00',
+      'Official price¥216.00',
+      'Official price¥45.00',
+      'Official price¥3.60',
+    ])
     assert.match(solRow.textContent ?? '', /Save about 94%/)
     assert.doesNotMatch(table.textContent ?? '', /NaN/)
 
@@ -215,6 +235,12 @@ describe('public pricing table model cells', () => {
     assert.doesNotMatch(container.textContent ?? '', /6% of official price/)
     assert.doesNotMatch(container.textContent ?? '', /Save about 94%/)
     assert.doesNotMatch(container.textContent ?? '', /NaN/)
+    const gpt55 = table.querySelector('[data-model-name="gpt-5.5"]')
+    assert.ok(gpt55)
+    assert.match(
+      gpt55.querySelectorAll('td')[3]?.textContent ?? '',
+      /Not applicable/
+    )
   })
 
   test('makes the horizontally scrollable table keyboard accessible', async () => {
@@ -225,7 +251,7 @@ describe('public pricing table model cells', () => {
     assert.equal(region.getAttribute('role'), 'region')
     assert.equal(region.getAttribute('tabindex'), '0')
     assert.match(region.getAttribute('aria-label') ?? '', /GPT-Pro/)
-    assert.ok(container.querySelector('[data-horizontal-scroll-hint]'))
+    assert.equal(container.querySelector('[data-horizontal-scroll-hint]'), null)
   })
 
   test('falls back every model in an incomplete comparison group to the normal table', () => {
@@ -258,24 +284,9 @@ describe('public pricing table model cells', () => {
     assert.equal(parentClicks, 0)
   })
 
-  test('exposes one safe official source link for each public model', async () => {
-    const links = [...container.querySelectorAll('a')]
-    assert.equal(links.length, 5)
-    assert.deepEqual(
-      links.map((link) => link.getAttribute('href')),
-      PUBLIC_COMPARISON_CATALOG[0].models.map(
-        (model) => model.officialPriceSourceUrl
-      )
-    )
-    for (const link of links) {
-      assert.equal(link.target, '_blank')
-      assert.equal(link.rel, 'noopener noreferrer')
-    }
-
-    links[0].addEventListener('click', (event) => event.preventDefault(), {
-      once: true,
-    })
-    await click(links[0])
-    assert.equal(parentClicks, 0)
+  test('does not expose model source links or verification dates', () => {
+    assert.equal(container.querySelectorAll('a').length, 0)
+    assert.doesNotMatch(container.textContent ?? '', /Price source/)
+    assert.doesNotMatch(container.textContent ?? '', /Verified on/)
   })
 })

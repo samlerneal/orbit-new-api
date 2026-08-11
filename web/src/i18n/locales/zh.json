@@ -5464,11 +5464,15 @@
     "Save about {{percent}}%": "节省约 {{percent}}%",
     "Input price": "输入价格",
     "Output price": "输出价格",
-    "Cache create": "缓存创建",
+    "Cache create": "缓存写入",
     "Cache read": "缓存读取",
     "Savings": "节省幅度",
     "Not applicable": "不适用",
     "Price source": "价格来源",
-    "Verified on {{date}}": "核验于 {{date}}"
+    "Verified on {{date}}": "核验于 {{date}}",
+    "Model pricing": "模型价格",
+    "Text models billed by multiplier · Image models billed per image": "文本模型按倍率计费 · 生图模型按张计费",
+    "Site price": "本站价",
+    "Official price": "官方价"
   }
 }

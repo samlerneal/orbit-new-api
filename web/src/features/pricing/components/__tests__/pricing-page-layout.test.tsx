@@ -9,18 +9,12 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import i18n from '@/i18n/config'
 
-import {
-  ENDPOINT_TYPES,
-  FILTER_ALL,
-  QUOTA_TYPES,
-  SORT_OPTIONS,
-} from '../../constants'
-import { normalizeViewMode } from '../../hooks/use-filters'
 import { PUBLIC_COMPARISON_CATALOG } from '../../public-comparison-catalog'
 import type { PricingModel, PricingVendor } from '../../types'
-import type { PricingToolbarProps } from '../pricing-toolbar'
 
 const VIEWPORT_WIDTHS = [1440, 1024, 390]
+const OWNER_GROUP_DESCRIPTION =
+  'GPTPro 低倍率自营号池，适合日常 Codex / API 编程请求；缓存写入按模型价格表展示'
 
 let container: HTMLDivElement
 let root: Root
@@ -49,84 +43,49 @@ function validComparisonModels(): PricingModel[] {
   }))
 }
 
-function toolbarProps(
-  models: PricingModel[],
-  overrides: Partial<PricingToolbarProps> = {}
-): PricingToolbarProps {
-  const ignoreString = (_value: string) => undefined
-  const ignoreBoolean = (_value: boolean) => undefined
-  return {
-    filteredCount: models.length,
-    totalCount: models.length,
-    sortBy: SORT_OPTIONS.NAME,
-    onSortChange: ignoreString,
-    tokenUnit: 'M',
-    onTokenUnitChange: () => undefined,
-    showRechargePrice: false,
-    onRechargePriceChange: ignoreBoolean,
-    quotaTypeFilter: QUOTA_TYPES.ALL,
-    endpointTypeFilter: ENDPOINT_TYPES.ALL,
-    vendorFilter: FILTER_ALL,
-    groupFilter: FILTER_ALL,
-    tagFilter: FILTER_ALL,
-    onQuotaTypeChange: ignoreString,
-    onEndpointTypeChange: ignoreString,
-    onVendorChange: ignoreString,
-    onGroupChange: ignoreString,
-    onTagChange: ignoreString,
-    vendors: [{ id: 4, name: 'OpenAI' }],
-    groups: ['default'],
-    tags: [],
-    models,
-    hasActiveFilters: false,
-    activeFilterCount: 0,
-    onClearFilters: () => undefined,
-    ...overrides,
-  }
-}
-
 async function renderLayout(options?: {
-  filteredModels?: PricingModel[]
+  models?: PricingModel[]
   vendors?: PricingVendor[]
-  toolbarOverrides?: Partial<PricingToolbarProps>
+  usdExchangeRate?: number
   onModelClick?: (modelName: string) => void
 }) {
-  const models = validComparisonModels()
-  const vendors = options?.vendors ?? [
-    { id: 4, name: 'OpenAI' },
-    { id: 5, name: 'Anthropic' },
-  ]
   await act(async () => {
     root.render(
       createElement(PricingCatalogLayout, {
-        models,
-        filteredModels: options?.filteredModels ?? models,
-        vendors,
-        searchInput: '',
-        onSearchChange: () => undefined,
-        onClearSearch: () => undefined,
-        hasActiveFilters: options?.toolbarOverrides?.hasActiveFilters ?? false,
-        onClearAll: () => undefined,
-        toolbarProps: toolbarProps(models, options?.toolbarOverrides),
+        models: options?.models ?? validComparisonModels(),
+        vendors: options?.vendors ?? [
+          { id: 4, name: 'OpenAI' },
+          { id: 5, name: 'Anthropic' },
+        ],
+        usdExchangeRate: options?.usdExchangeRate ?? 7.2,
         onModelClick: options?.onModelClick ?? (() => undefined),
       })
     )
   })
 }
 
-async function click(element: Element) {
-  await act(async () => {
-    ;(element as HTMLElement).click()
-    await new Promise((resolve) => setTimeout(resolve, 20))
-  })
-}
-
-function findButton(label: string): HTMLButtonElement {
-  const button = [...document.querySelectorAll('button')].find(
-    (candidate) => candidate.textContent?.trim() === label
+function assertSixColumnTable(width: number) {
+  const tables = container.querySelectorAll('table')
+  assert.equal(tables.length, 1, `table count at ${width}px`)
+  assert.deepEqual(
+    [...tables[0].querySelectorAll('th')].map((header) =>
+      header.textContent?.trim()
+    ),
+    [
+      'Model',
+      'Input price',
+      'Output price',
+      'Cache write',
+      'Cache read',
+      'Savings',
+    ]
   )
-  assert.ok(button, `button not found: ${label}`)
-  return button
+  const rows = tables[0].querySelectorAll('tbody tr')
+  assert.equal(rows.length, 5)
+  assert.equal(
+    new Set([...rows].map((row) => row.getAttribute('data-model-name'))).size,
+    5
+  )
 }
 
 before(async () => {
@@ -154,42 +113,34 @@ after(() => {
 })
 
 describe('public pricing page layout', () => {
-  test('uses the same six-column table at 1440, 1024, and 390 pixels', async () => {
+  test('uses one accessible six-column table at every locked viewport', async () => {
     for (const width of VIEWPORT_WIDTHS) {
       Object.defineProperty(window, 'innerWidth', {
         configurable: true,
         value: width,
       })
       await renderLayout()
+      assertSixColumnTable(width)
 
-      const tables = container.querySelectorAll('table')
-      assert.equal(tables.length, 1, `table count at ${width}px`)
-      assert.deepEqual(
-        [...tables[0].querySelectorAll('th')].map((header) =>
-          header.textContent?.trim()
-        ),
-        [
-          'Model',
-          'Input price',
-          'Output price',
-          'Cache create',
-          'Cache read',
-          'Savings',
-        ]
+      const page = container.querySelector('[data-pricing-page]')
+      const scrollRegion = container.querySelector(
+        '[data-pricing-table-scroll]'
       )
-      const rows = tables[0].querySelectorAll('tbody tr')
-      assert.equal(rows.length, 5)
+      assert.ok(page)
+      assert.match(page.className, /min-w-0/)
+      assert.match(page.className, /max-w-full/)
+      assert.ok(scrollRegion)
+      assert.equal(scrollRegion.getAttribute('role'), 'region')
+      assert.equal(scrollRegion.getAttribute('tabindex'), '0')
+      assert.match(scrollRegion.className, /overflow-x-auto/)
       assert.equal(
-        new Set([...rows].map((row) => row.getAttribute('data-model-name')))
-          .size,
-        5
+        container.querySelector('[data-horizontal-scroll-hint]'),
+        null
       )
-      assert.ok(container.querySelector('[data-pricing-six-column-table]'))
-      assert.equal(container.querySelectorAll('aside').length, 0)
     }
   })
 
-  test('projects only real categories and preserves the locked block order', async () => {
+  test('renders the locked text hierarchy and only non-empty taxonomy', async () => {
     await renderLayout()
 
     assert.deepEqual(
@@ -200,133 +151,96 @@ describe('public pricing page layout', () => {
         'title',
         'supplier-navigation',
         'product-group-navigation',
-        'catalog-controls',
         'catalog-table',
       ]
     )
-    const orderedSelectors = [
-      '[data-pricing-block="title"]',
-      '[data-pricing-block="supplier-navigation"]',
-      '[data-pricing-block="product-group-navigation"]',
-      '[data-pricing-block="catalog-controls"]',
-      '[data-pricing-group-heading]',
-      '[data-pricing-group-badge]',
-      '[data-pricing-group-description]',
-      'table',
-    ]
-    const orderedElements = orderedSelectors.map((selector) => {
-      const element = container.querySelector(selector)
-      assert.ok(element, `missing ordered element: ${selector}`)
-      return element
-    })
-    for (let index = 1; index < orderedElements.length; index += 1) {
-      assert.ok(
-        orderedElements[index - 1].compareDocumentPosition(
-          orderedElements[index]
-        ) & Node.DOCUMENT_POSITION_FOLLOWING
-      )
-    }
-    assert.match(container.textContent ?? '', /OpenAI/)
-    assert.doesNotMatch(container.textContent ?? '', /Anthropic/)
-    assert.match(container.textContent ?? '', /GPT-Pro/)
-    assert.match(container.textContent ?? '', /6% of official price/)
+    assert.match(container.textContent ?? '', /Model pricing/)
     assert.match(
       container.textContent ?? '',
-      /OpenAI · Standard · Short Context · USD\/1M tokens · Verified on 2026-08-10/
+      /Text models billed by multiplier · Image models billed per image/
     )
+    assert.match(container.textContent ?? '', /OpenAI/)
+    assert.doesNotMatch(container.textContent ?? '', /Anthropic/)
+    assert.equal(
+      container.querySelector('[data-pricing-group-heading]')?.textContent,
+      'GPT-Pro'
+    )
+    assert.equal(
+      container.querySelector('[data-pricing-group-description]')?.textContent,
+      OWNER_GROUP_DESCRIPTION
+    )
+    assert.match(container.textContent ?? '', /6% of official price/)
+  })
+
+  test('uses one exchange rate for every site and official CNY price', async () => {
+    await renderLayout({ usdExchangeRate: 7.2 })
 
     const solRow = container.querySelector('[data-model-name="gpt-5.6-sol"]')
     assert.ok(solRow)
-    assert.match(solRow.textContent ?? '', /\$0\.30/)
-    assert.match(solRow.textContent ?? '', /\$1\.80/)
-    assert.match(solRow.textContent ?? '', /\$0\.375/)
-    assert.match(solRow.textContent ?? '', /\$0\.03/)
-    assert.match(solRow.textContent ?? '', /Save about 94%/)
-  })
-
-  test('normalizes fresh and legacy view queries to table mode', () => {
-    assert.equal(normalizeViewMode(undefined), 'table')
-    assert.equal(normalizeViewMode('card'), 'table')
-    assert.equal(normalizeViewMode('unknown'), 'table')
-    assert.equal(normalizeViewMode('table'), 'table')
-  })
-
-  test('keeps the table while filters open, reset, and close', async () => {
-    let clearCount = 0
-    const clearFilters = () => {
-      clearCount += 1
-    }
-    await renderLayout({
-      toolbarOverrides: {
-        hasActiveFilters: true,
-        activeFilterCount: 1,
-        onClearFilters: clearFilters,
-      },
-    })
-
-    const filterButton = findButton('Filter1')
-    assert.equal(filterButton.getAttribute('aria-expanded'), 'false')
-    await click(filterButton)
-    assert.equal(filterButton.getAttribute('aria-expanded'), 'true')
-    assert.equal(container.querySelectorAll('table').length, 1)
-
-    const toolbarSource = readFileSync(
-      new URL('../pricing-toolbar.tsx', import.meta.url),
-      'utf8'
+    assert.deepEqual(
+      [...solRow.querySelectorAll('[data-site-price]')].map((price) =>
+        price.textContent?.trim()
+      ),
+      [
+        'Site price¥2.16',
+        'Site price¥12.96',
+        'Site price¥2.70',
+        'Site price¥0.216',
+      ]
     )
-    assert.match(toolbarSource, /onClearFilters=\{props\.onClearFilters\}/)
-    clearFilters()
-    assert.equal(clearCount, 1)
-    assert.equal(container.querySelectorAll('table').length, 1)
-
-    await click(filterButton)
-    assert.equal(filterButton.getAttribute('aria-expanded'), 'false')
-    assert.equal(container.querySelectorAll('table').length, 1)
+    assert.deepEqual(
+      [...solRow.querySelectorAll('[data-official-price]')].map((price) =>
+        price.textContent?.trim()
+      ),
+      [
+        'Official price¥36.00',
+        'Official price¥216.00',
+        'Official price¥45.00',
+        'Official price¥3.60',
+      ]
+    )
+    assert.doesNotMatch(container.textContent ?? '', /NaN|\$|free/i)
   })
 
-  test('keeps an active-filter partial group in the same table without promotion', async () => {
-    await renderLayout({
-      filteredModels: validComparisonModels().slice(0, 1),
-      toolbarOverrides: { hasActiveFilters: true, activeFilterCount: 1 },
-    })
-
-    const table = container.querySelector('table')
-    assert.ok(table)
-    assert.equal(table.querySelectorAll('th').length, 6)
-    assert.equal(table.querySelectorAll('tbody tr').length, 1)
-    assert.doesNotMatch(container.textContent ?? '', /Official price: 6%/)
-    assert.doesNotMatch(container.textContent ?? '', /Save about 94%/)
-  })
-
-  test('keeps mobile scrolling accessible and removes legacy page composition', async () => {
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      value: 390,
-    })
+  test('removes search, controls, counts, sources, dates, hints, and cards', async () => {
     await renderLayout()
 
-    const scrollRegion = container.querySelector('[data-pricing-table-scroll]')
-    assert.ok(scrollRegion)
-    assert.equal(scrollRegion.getAttribute('role'), 'region')
-    assert.equal(scrollRegion.getAttribute('tabindex'), '0')
-    assert.match(scrollRegion.getAttribute('aria-label') ?? '', /GPT-Pro/)
-    assert.ok(container.querySelector('[data-horizontal-scroll-hint]'))
+    assert.equal(container.querySelectorAll('input').length, 0)
     assert.equal(
-      container.querySelectorAll('input[aria-label="Search models"]').length,
-      1
+      container.querySelector('[data-pricing-secondary-controls]'),
+      null
     )
-    assert.ok(container.querySelector('[data-pricing-secondary-controls]'))
-    assert.doesNotMatch(container.textContent ?? '', /Card view|Table view/)
-    assert.doesNotMatch(container.textContent ?? '', /NaN/)
+    assert.equal(container.querySelectorAll('aside').length, 0)
+    assert.doesNotMatch(
+      container.textContent ?? '',
+      /models enabled|Price source|Verified on|More|Card view|Table view/
+    )
 
     const source = readFileSync(
       new URL('../../index.tsx', import.meta.url),
       'utf8'
     )
-    assert.doesNotMatch(source, /ModelCardGrid/)
-    assert.doesNotMatch(source, /<PricingSidebar/)
-    assert.doesNotMatch(source, /viewMode ===/)
-    assert.doesNotMatch(source, /radial-gradient/)
-    assert.doesNotMatch(source, /Discover curated AI models/)
+    assert.doesNotMatch(source, /SearchBar|PricingToolbar|useFilters/)
+    assert.doesNotMatch(source, /ModelCardGrid|viewMode|filteredModels/)
+  })
+
+  test('keeps all new page labels translated in four locales', () => {
+    const localeDirectory = new URL(
+      '../../../../i18n/locales/',
+      import.meta.url
+    )
+    for (const filename of ['zh.json', 'zh-TW.json', 'en.json', 'ru.json']) {
+      const locale = JSON.parse(
+        readFileSync(new URL(filename, localeDirectory), 'utf8')
+      ) as { translation: Record<string, string> }
+      for (const key of [
+        'Model pricing',
+        'Text models billed by multiplier · Image models billed per image',
+        'Site price',
+        'Official price',
+      ]) {
+        assert.ok(locale.translation[key], `${filename}: missing ${key}`)
+      }
+    }
   })
 })

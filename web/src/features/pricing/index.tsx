@@ -22,18 +22,8 @@ import { useTranslation } from 'react-i18next'
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
 
-import {
-  LoadingSkeleton,
-  EmptyState,
-  SearchBar,
-  PricingTable,
-  PricingToolbar,
-  ModelDetailsDrawer,
-} from './components'
-import type { PricingToolbarProps } from './components/pricing-toolbar'
-import { useFilters } from './hooks/use-filters'
+import { LoadingSkeleton, PricingTable, ModelDetailsDrawer } from './components'
 import { usePricingData } from './hooks/use-pricing-data'
-import { extractAllTags } from './lib/filters'
 import {
   canShowGroupComparison,
   getPublicComparisonResults,
@@ -78,17 +68,8 @@ function getCatalogProjection(
 
 export interface PricingCatalogLayoutProps {
   models: PricingModel[]
-  filteredModels: PricingModel[]
   vendors: PricingVendor[]
-  searchInput: string
-  onSearchChange: (value: string) => void
-  onClearSearch: () => void
-  hasActiveFilters: boolean
-  onClearAll: () => void
-  toolbarProps: Omit<
-    PricingToolbarProps,
-    'filteredCount' | 'totalCount' | 'vendors' | 'groups' | 'tags' | 'models'
-  >
+  usdExchangeRate: number
   onModelClick: (modelName: string) => void
 }
 
@@ -162,65 +143,37 @@ export function PricingCatalogLayout(props: PricingCatalogLayoutProps) {
   const catalogModels = props.models.filter((model) =>
     catalogModelIds.has(model.model_name)
   )
-  const tableModels = props.filteredModels.filter((model) =>
-    catalogModelIds.has(model.model_name)
-  )
-  const catalogSalesGroups = [
-    ...new Set(catalogModels.flatMap((model) => model.enable_groups)),
-  ]
 
   return (
-    <div className='space-y-5'>
+    <div className='max-w-full min-w-0 space-y-5' data-pricing-page>
       <header className='space-y-2' data-pricing-block='title'>
         <h1 className='text-3xl font-bold tracking-tight sm:text-4xl'>
-          {t('Model Square')}
+          {t('Model pricing')}
         </h1>
         <p className='text-muted-foreground max-w-3xl text-sm sm:text-base'>
-          {t('This site currently has {{count}} models enabled', {
-            count: props.models.length,
-          })}
+          {t(
+            'Text models billed by multiplier · Image models billed per image'
+          )}
         </p>
       </header>
 
       <SupplierNavigation suppliers={suppliers} />
       <ProductGroupNavigation groups={groups} />
 
-      <div
-        className='grid gap-3 lg:grid-cols-[minmax(260px,1fr)_auto]'
-        data-pricing-block='catalog-controls'
-      >
-        <SearchBar
-          value={props.searchInput}
-          onChange={props.onSearchChange}
-          onClear={props.onClearSearch}
-          placeholder={t('Search model name, provider, endpoint, or tag...')}
-        />
-        <PricingToolbar
-          {...props.toolbarProps}
-          filteredCount={tableModels.length}
-          totalCount={catalogModels.length}
-          vendors={suppliers}
-          groups={catalogSalesGroups}
-          tags={extractAllTags(catalogModels)}
-          models={catalogModels}
-        />
-      </div>
-
       <main
+        className='min-w-0'
         data-pricing-block='catalog-table'
         data-public-comparison={groups.length > 0 ? 'ready' : 'hidden'}
       >
-        {groups.length === 0 || tableModels.length === 0 ? (
-          <EmptyState
-            searchQuery={props.searchInput}
-            hasActiveFilters={props.hasActiveFilters}
-            onClearFilters={props.onClearAll}
-          />
+        {groups.length === 0 || catalogModels.length === 0 ? (
+          <div className='rounded-xl border border-dashed px-6 py-16 text-center'>
+            <p className='text-muted-foreground'>{t('No models found')}</p>
+          </div>
         ) : (
           <PricingTable
-            models={tableModels}
+            models={catalogModels}
             groups={groups}
-            vendorName={projection[0]?.vendor.name}
+            usdExchangeRate={props.usdExchangeRate}
             onModelClick={props.onModelClick}
           />
         )}
@@ -236,8 +189,6 @@ export function Pricing() {
   const pricingData = usePricingData()
   const models = pricingData.models || EMPTY_MODELS
   const vendors = pricingData.vendors || EMPTY_VENDORS
-  const filters = useFilters(models)
-  const { clearFilters, clearSearch } = filters
 
   const handleModelClick = useCallback((modelName: string) => {
     setSelectedModelName(modelName)
@@ -249,11 +200,6 @@ export function Pricing() {
         : null,
     [models, selectedModelName]
   )
-  const handleClearAll = useCallback(() => {
-    clearFilters()
-    clearSearch()
-  }, [clearFilters, clearSearch])
-
   if (pricingData.isLoading) {
     return (
       <PublicLayout showMainContainer={false}>
@@ -266,39 +212,12 @@ export function Pricing() {
 
   return (
     <PublicLayout showMainContainer={false}>
-      <PageTransition className='mx-auto w-full max-w-[1600px] px-3 pt-16 pb-8 sm:px-6 sm:pt-20 xl:px-8'>
+      <PageTransition className='mx-auto w-full max-w-[1600px] overflow-x-clip px-3 pt-16 pb-8 sm:px-6 sm:pt-20 xl:px-8'>
         <PricingCatalogLayout
           models={models}
-          filteredModels={filters.filteredModels}
           vendors={vendors}
-          searchInput={filters.searchInput}
-          onSearchChange={filters.setSearchInput}
-          onClearSearch={filters.clearSearch}
-          hasActiveFilters={filters.hasActiveFilters}
-          onClearAll={handleClearAll}
+          usdExchangeRate={pricingData.usdExchangeRate}
           onModelClick={handleModelClick}
-          toolbarProps={{
-            sortBy: filters.sortBy,
-            onSortChange: filters.setSortBy,
-            tokenUnit: filters.tokenUnit,
-            onTokenUnitChange: filters.setTokenUnit,
-            showRechargePrice: filters.showRechargePrice,
-            onRechargePriceChange: filters.setShowRechargePrice,
-            quotaTypeFilter: filters.quotaTypeFilter,
-            endpointTypeFilter: filters.endpointTypeFilter,
-            vendorFilter: filters.vendorFilter,
-            groupFilter: filters.groupFilter,
-            tagFilter: filters.tagFilter,
-            onQuotaTypeChange: filters.setQuotaTypeFilter,
-            onEndpointTypeChange: filters.setEndpointTypeFilter,
-            onVendorChange: filters.setVendorFilter,
-            onGroupChange: filters.setGroupFilter,
-            onTagChange: filters.setTagFilter,
-            groupRatios: pricingData.groupRatio,
-            hasActiveFilters: filters.hasActiveFilters,
-            activeFilterCount: filters.activeFilterCount,
-            onClearFilters: filters.clearFilters,
-          }}
         />
 
         {selectedModel && (
@@ -319,8 +238,8 @@ export function Pricing() {
             autoGroups={pricingData.autoGroups || []}
             priceRate={pricingData.priceRate ?? 1}
             usdExchangeRate={pricingData.usdExchangeRate ?? 1}
-            tokenUnit={filters.tokenUnit}
-            showRechargePrice={filters.showRechargePrice}
+            tokenUnit='M'
+            showRechargePrice={false}
           />
         )}
       </PageTransition>

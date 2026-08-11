@@ -23,7 +23,9 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 
 import {
   canShowGroupComparison,
+  convertUsdToCny,
   getPublicComparisonResults,
+  type PublicPriceDimension,
   type PublicComparisonResult,
 } from '../lib/public-comparison'
 import {
@@ -36,20 +38,13 @@ import { PUBLIC_COMPARISON_COLUMN_KEYS } from './pricing-columns'
 export interface PricingTableProps {
   models: PricingModel[]
   groups?: PublicComparisonGroup[]
-  vendorName?: string
+  usdExchangeRate: number
   onModelClick?: (modelName: string) => void
 }
 
-type PricingModelCellProps =
-  | { result: PublicComparisonResult; model?: never }
-  | { model: PricingModel; result?: never }
-
-export function PublicComparisonModelCell(props: PricingModelCellProps) {
+export function PublicComparisonModelCell({ model }: { model: PricingModel }) {
   const { t } = useTranslation()
   const { copyToClipboard } = useCopyToClipboard()
-  const result = 'result' in props ? props.result : undefined
-  const model = result?.model ?? ('model' in props ? props.model : undefined)
-  if (!model) return null
   const modelName = model.model_name
 
   const handleCopy = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -71,70 +66,70 @@ export function PublicComparisonModelCell(props: PricingModelCellProps) {
           <Copy className='size-3.5' />
         </button>
       </div>
-      {result && (
-        <a
-          href={result.catalogModel.officialPriceSourceUrl}
-          target='_blank'
-          rel='noopener noreferrer'
-          onClick={(event) => event.stopPropagation()}
-          className='text-muted-foreground mt-1 block text-[11px] underline'
-        >
-          {t('Price source')} ·{' '}
-          {t('Verified on {{date}}', {
-            date: result.catalogModel.sourceObservedAt,
-          })}
-        </a>
-      )}
     </div>
   )
 }
 
-function formatContextTier(contextTier: string): string {
-  return contextTier.charAt(0).toUpperCase() + contextTier.slice(1)
-}
-
-function GroupDescription(props: {
-  group: PublicComparisonGroup
-  vendorName?: string
-}) {
-  const { t } = useTranslation()
-  const firstModel = props.group.models[0]
-  if (!firstModel || !props.vendorName) return null
-
+function GroupDescription({ group }: { group: PublicComparisonGroup }) {
   return (
     <p
       className='text-muted-foreground text-xs sm:text-sm'
       data-pricing-group-description
     >
-      {props.vendorName} · {t('Standard')} ·{' '}
-      {formatContextTier(firstModel.contextTier)} {t('Context')} · USD/1M{' '}
-      {t('tokens')} ·{' '}
-      {t('Verified on {{date}}', { date: firstModel.sourceObservedAt })}
+      {group.description}
     </p>
   )
 }
 
+function formatCnyPerMillion(
+  valueInUsd: number | null,
+  usdExchangeRate: number
+): string | null {
+  const valueInCny = convertUsdToCny(valueInUsd, usdExchangeRate)
+  if (valueInCny === null) return null
+  return valueInCny.toLocaleString('zh-CN', {
+    style: 'currency',
+    currency: 'CNY',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  })
+}
+
 function ComparisonPriceCell(props: {
   result?: PublicComparisonResult
-  dimension: 'input' | 'output' | 'cacheCreate' | 'cacheRead'
+  dimension: PublicPriceDimension
+  usdExchangeRate: number
 }) {
   const { t } = useTranslation()
   if (!props.result) {
     return <span aria-label={t('Not applicable')}>—</span>
   }
 
-  const value = props.result.salePrices[props.dimension]
-  return value === null ? (
+  const sitePrice = formatCnyPerMillion(
+    props.result.salePrices[props.dimension],
+    props.usdExchangeRate
+  )
+  const officialPrice = formatCnyPerMillion(
+    props.result.officialPrices[props.dimension],
+    props.usdExchangeRate
+  )
+  return sitePrice === null || officialPrice === null ? (
     <span>{t('Not applicable')}</span>
   ) : (
-    <span>
-      {value.toLocaleString('en-US', {
-        style: 'currency',
-        currency: 'USD',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 8,
-      })}
-    </span>
+    <div className='space-y-1 leading-tight'>
+      <div data-site-price>
+        <span className='text-muted-foreground mr-1 font-sans text-[11px]'>
+          {t('Site price')}
+        </span>
+        <span>{sitePrice}</span>
+      </div>
+      <div className='text-muted-foreground' data-official-price>
+        <span className='mr-1 font-sans text-[11px]'>
+          {t('Official price')}
+        </span>
+        <span>{officialPrice}</span>
+      </div>
+    </div>
   )
 }
 
@@ -165,6 +160,7 @@ function ComparisonTableRow(props: {
   model: PricingModel
   result?: PublicComparisonResult
   comparisonVisible: boolean
+  usdExchangeRate: number
   onModelClick?: (modelName: string) => void
 }) {
   const { t } = useTranslation()
@@ -186,16 +182,16 @@ function ComparisonTableRow(props: {
       onKeyDown={handleKeyDown}
     >
       <td className='bg-background sticky left-0 z-10 p-3'>
-        {props.result ? (
-          <PublicComparisonModelCell result={props.result} />
-        ) : (
-          <PublicComparisonModelCell model={props.model} />
-        )}
+        <PublicComparisonModelCell model={props.model} />
       </td>
       {(['input', 'output', 'cacheCreate', 'cacheRead'] as const).map(
         (dimension) => (
           <td key={dimension} className='p-3 font-mono whitespace-nowrap'>
-            <ComparisonPriceCell result={props.result} dimension={dimension} />
+            <ComparisonPriceCell
+              result={props.result}
+              dimension={dimension}
+              usdExchangeRate={props.usdExchangeRate}
+            />
           </td>
         )
       )}
@@ -215,7 +211,7 @@ function PricingGroupTable(props: {
   models: PricingModel[]
   results: PublicComparisonResult[]
   comparisonVisible: boolean
-  vendorName?: string
+  usdExchangeRate: number
   onModelClick?: (modelName: string) => void
 }) {
   const { t } = useTranslation()
@@ -243,15 +239,9 @@ function PricingGroupTable(props: {
             </span>
           )}
         </div>
-        <GroupDescription group={props.group} vendorName={props.vendorName} />
+        <GroupDescription group={props.group} />
       </div>
 
-      <p
-        className='text-muted-foreground text-xs lg:hidden'
-        data-horizontal-scroll-hint
-      >
-        ← → {t('More')}
-      </p>
       <div
         role='region'
         tabIndex={0}
@@ -270,6 +260,7 @@ function PricingGroupTable(props: {
                   model={model}
                   result={result}
                   comparisonVisible={props.comparisonVisible}
+                  usdExchangeRate={props.usdExchangeRate}
                   onModelClick={props.onModelClick}
                 />
               )
@@ -284,7 +275,7 @@ function PricingGroupTable(props: {
 export function PricingTable({
   models,
   groups = PUBLIC_COMPARISON_CATALOG,
-  vendorName,
+  usdExchangeRate,
   onModelClick,
 }: PricingTableProps) {
   const comparisonResults = getPublicComparisonResults(models, groups)
@@ -313,7 +304,7 @@ export function PricingTable({
               (result) => result.group.groupId === group.groupId
             )}
             comparisonVisible={visibleGroupIds.has(group.groupId)}
-            vendorName={vendorName}
+            usdExchangeRate={usdExchangeRate}
             onModelClick={onModelClick}
           />
         )

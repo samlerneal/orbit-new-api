@@ -5323,11 +5323,15 @@
     "Save about {{percent}}%": "Экономия около {{percent}}%",
     "Input price": "Цена ввода",
     "Output price": "Цена вывода",
-    "Cache create": "Создание кэша",
+    "Cache create": "Запись в кэш",
     "Cache read": "Чтение кэша",
     "Savings": "Экономия",
     "Not applicable": "Неприменимо",
     "Price source": "Источник цен",
-    "Verified on {{date}}": "Проверено {{date}}"
+    "Verified on {{date}}": "Проверено {{date}}",
+    "Model pricing": "Цены на модели",
+    "Text models billed by multiplier · Image models billed per image": "Текстовые модели тарифицируются по коэффициенту · Модели изображений — за изображение",
+    "Site price": "Цена сайта",
+    "Official price": "Официальная цена"
   }
 }

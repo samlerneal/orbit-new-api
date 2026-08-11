@@ -48,6 +48,12 @@ let streamSource: FakeStreamSource | null = null
 const PlaygroundMessageContent = () => null
 let publicChatSessions: Array<Record<string, unknown>> = []
 let publicChatActiveSessionId = ''
+let publicChatModelProjection:
+  | ((models: Array<{ label: string; value: string }>) => Array<{
+      label: string
+      value: string
+    }>)
+  | undefined
 
 function resetPublicChatState() {
   publicChatActiveSessionId = 'chat-1'
@@ -187,7 +193,12 @@ mock.module('./hooks', () => ({
       },
     }
   },
-  usePlaygroundOptions: () => ({ isLoadingModels: false }),
+  usePlaygroundOptions: (options: {
+    projectModels?: typeof publicChatModelProjection
+  }) => {
+    publicChatModelProjection = options.projectModels
+    return { isLoadingModels: false }
+  },
 }))
 function getPublicChatState() {
   return {
@@ -248,6 +259,8 @@ mock.module('./lib', () => ({
     { key: `user-${messages.length}`, from: 'user', text },
     { key: `assistant-${messages.length}`, from: 'assistant', text: '' },
   ],
+  filterPublicChatModels: (models: Array<{ label: string; value: string }>) =>
+    models.filter((model) => model.value !== 'gpt-image-2'),
   getMessageAlignment: () => 'left',
   getMessageContent: (message: { text: string }) => message.text,
 }))
@@ -318,6 +331,22 @@ function findRenderedMessage(page: unknown) {
 }
 
 describe('public chat surface contract', () => {
+  test('wires the exact image-model projection only into public chat', () => {
+    state.length = 0
+    renderPublicChat()
+    assert.ok(publicChatModelProjection)
+
+    const projected = publicChatModelProjection([
+      { label: 'image', value: 'gpt-image-2' },
+      { label: 'text', value: 'gpt-5.6-sol' },
+      { label: 'similar', value: 'gpt-image-2-preview' },
+    ])
+    assert.deepEqual(
+      projected.map((model) => model.value),
+      ['gpt-5.6-sol', 'gpt-image-2-preview']
+    )
+  })
+
   test('sends exactly one in-memory message pair and delegates stop', () => {
     state.length = 0
     sentMessages = []

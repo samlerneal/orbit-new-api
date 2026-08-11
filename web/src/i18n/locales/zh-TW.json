@@ -5323,11 +5323,15 @@
     "Save about {{percent}}%": "節省約 {{percent}}%",
     "Input price": "輸入價格",
     "Output price": "輸出價格",
-    "Cache create": "快取建立",
+    "Cache create": "快取寫入",
     "Cache read": "快取讀取",
     "Savings": "節省幅度",
     "Not applicable": "不適用",
     "Price source": "價格來源",
-    "Verified on {{date}}": "核驗於 {{date}}"
+    "Verified on {{date}}": "核驗於 {{date}}",
+    "Model pricing": "模型價格",
+    "Text models billed by multiplier · Image models billed per image": "文字模型按倍率計費 · 生圖模型按張計費",
+    "Site price": "本站價",
+    "Official price": "官方價"
   }
 }

@@ -18,6 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { GroupOption, ModelOption } from '../../types'
 
+const PUBLIC_CHAT_HIDDEN_MODEL = 'gpt-image-2'
+
+export type ModelOptionProjection = (models: ModelOption[]) => ModelOption[]
+
+export function filterPublicChatModels(models: ModelOption[]): ModelOption[] {
+  return models.filter((model) => model.value !== PUBLIC_CHAT_HIDDEN_MODEL)
+}
+
 export function getModelFallback(
   models: ModelOption[],
   currentModel: string
@@ -40,6 +48,22 @@ export function shouldClearModelForGroup(
   }
 
   return !models.some((model) => model.value === currentModel)
+}
+
+export function resolveModelOptions(
+  models: ModelOption[],
+  currentModel: string,
+  projectModels?: ModelOptionProjection
+): { models: ModelOption[]; nextModel: string | null } {
+  const projectedModels = projectModels ? projectModels(models) : models
+  const fallback = getModelFallback(projectedModels, currentModel)
+  if (fallback) {
+    return { models: projectedModels, nextModel: fallback }
+  }
+  const nextModel = shouldClearModelForGroup(projectedModels, currentModel)
+    ? ''
+    : null
+  return { models: projectedModels, nextModel }
 }
 
 export function getGroupFallback(

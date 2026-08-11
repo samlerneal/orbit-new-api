@@ -38,6 +38,7 @@ export type PublicComparisonModel = {
 export type PublicComparisonGroup = {
   groupId: string
   displayName: string
+  description: string
   models: PublicComparisonModel[]
 }
 
@@ -54,7 +55,9 @@ const PRICE = (amount: string): OfficialPrice => ({
 export const PUBLIC_COMPARISON_CATALOG: PublicComparisonGroup[] = [
   {
     groupId: 'gpt-pro',
-    displayName: 'GPT-Pro · 正价号池 · 官方满血版',
+    displayName: 'GPT-Pro',
+    description:
+      'GPTPro 低倍率自营号池，适合日常 Codex / API 编程请求；缓存写入按模型价格表展示',
     models: [
       {
         publicModelId: 'gpt-5.6-sol',

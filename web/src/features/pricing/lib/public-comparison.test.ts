@@ -6,6 +6,7 @@ import { PUBLIC_COMPARISON_CATALOG } from '../public-comparison-catalog'
 import type { PricingModel } from '../types'
 import {
   canShowGroupComparison,
+  convertUsdToCny,
   getPublicComparisonResults,
 } from './public-comparison'
 
@@ -48,6 +49,42 @@ describe('public comparison', () => {
       true
     )
     assert.ok(results.every((result) => result.savingsPercent === 94))
+  })
+
+  test('converts site and official prices with the same exchange rate', () => {
+    const result = getPublicComparisonResults(
+      validModels,
+      PUBLIC_COMPARISON_CATALOG
+    ).find(({ model }) => model.model_name === 'gpt-5.6-sol')
+
+    assert.ok(result)
+    const dimensions = ['input', 'output', 'cacheCreate', 'cacheRead'] as const
+    assert.deepEqual(
+      dimensions.map((dimension) =>
+        Number(convertUsdToCny(result.salePrices[dimension], 7.2)?.toFixed(6))
+      ),
+      [2.16, 12.96, 2.7, 0.216]
+    )
+    assert.deepEqual(
+      dimensions.map((dimension) =>
+        Number(
+          convertUsdToCny(result.officialPrices[dimension], 7.2)?.toFixed(6)
+        )
+      ),
+      [36, 216, 45, 3.6]
+    )
+  })
+
+  test('fails closed for unavailable prices and invalid exchange rates', () => {
+    assert.equal(convertUsdToCny(null, 7.2), null)
+    assert.equal(convertUsdToCny(1, 0), null)
+    assert.equal(convertUsdToCny(1, Number.NaN), null)
+    assert.equal(convertUsdToCny(Number.POSITIVE_INFINITY, 7.2), null)
+  })
+
+  test('fails closed when conversion overflows or underflows', () => {
+    assert.equal(convertUsdToCny(Number.MAX_VALUE, 2), null)
+    assert.equal(convertUsdToCny(Number.MIN_VALUE, Number.MIN_VALUE), null)
   })
 
   test('suppresses a group when a required cache ratio is missing or invalid', () => {
@@ -107,6 +144,8 @@ describe('public comparison', () => {
     )
 
     assert.equal(gpt55?.salePrices.cacheCreate, null)
+    assert.equal(gpt55?.officialPrices.cacheCreate, null)
     assert.equal(gpt54Mini?.salePrices.cacheCreate, null)
+    assert.equal(gpt54Mini?.officialPrices.cacheCreate, null)
   })
 })

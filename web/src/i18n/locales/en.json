@@ -5464,11 +5464,15 @@
     "Save about {{percent}}%": "Save about {{percent}}%",
     "Input price": "Input price",
     "Output price": "Output price",
-    "Cache create": "Cache create",
+    "Cache create": "Cache write",
     "Cache read": "Cache read",
     "Savings": "Savings",
     "Not applicable": "Not applicable",
     "Price source": "Price source",
-    "Verified on {{date}}": "Verified on {{date}}"
+    "Verified on {{date}}": "Verified on {{date}}",
+    "Model pricing": "Model pricing",
+    "Text models billed by multiplier · Image models billed per image": "Text models billed by multiplier · Image models billed per image",
+    "Site price": "Site price",
+    "Official price": "Official price"
   }
 }

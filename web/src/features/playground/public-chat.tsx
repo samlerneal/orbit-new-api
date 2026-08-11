@@ -48,6 +48,7 @@ import {
 } from './hooks/use-public-chat-state'
 import {
   appendUserMessagePair,
+  filterPublicChatModels,
   getMessageAlignment,
   getMessageContent,
 } from './lib'
@@ -246,6 +247,7 @@ export function PublicChatReady(props: PublicChatReadyProps) {
   const { isLoadingModels } = usePlaygroundOptions({
     currentGroup: config.group,
     currentModel: config.model,
+    projectModels: filterPublicChatModels,
     setGroups,
     setModels,
     updateConfig,
