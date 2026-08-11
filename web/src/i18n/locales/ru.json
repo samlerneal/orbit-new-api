@@ -5321,6 +5321,7 @@
     "Image probe failed.": "Проверка изображения не удалась.",
     "Official price: 6%": "6% от официальной цены",
     "Save about {{percent}}%": "Экономия около {{percent}}%",
+    "Save {{percent}}%": "Экономия {{percent}}%",
     "Input price": "Цена ввода",
     "Output price": "Цена вывода",
     "Cache create": "Запись в кэш",
@@ -5332,6 +5333,8 @@
     "Model pricing": "Цены на модели",
     "Text models billed by multiplier · Image models billed per image": "Текстовые модели тарифицируются по коэффициенту · Модели изображений — за изображение",
     "Site price": "Цена сайта",
-    "Official price": "Официальная цена"
+    "Official price": "Официальная цена",
+    "All prices are in CNY; text models are billed per 1M tokens, and image models per generated image.": "Все цены указаны в юанях; текстовые модели тарифицируются за 1 млн токенов, а модели изображений — за каждое созданное изображение.",
+    "Text model charges use console real-time group multipliers; image model charges use fixed unit prices in this table.": "Текстовые модели тарифицируются по актуальным коэффициентам групп в консоли, а модели изображений — по фиксированным ценам в этой таблице."
   }
 }

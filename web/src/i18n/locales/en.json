@@ -5462,6 +5462,7 @@
     "Image probe failed.": "Image probe failed.",
     "Official price: 6%": "6% of official price",
     "Save about {{percent}}%": "Save about {{percent}}%",
+    "Save {{percent}}%": "Save {{percent}}%",
     "Input price": "Input price",
     "Output price": "Output price",
     "Cache create": "Cache write",
@@ -5473,6 +5474,8 @@
     "Model pricing": "Model pricing",
     "Text models billed by multiplier · Image models billed per image": "Text models billed by multiplier · Image models billed per image",
     "Site price": "Site price",
-    "Official price": "Official price"
+    "Official price": "Official price",
+    "All prices are in CNY; text models are billed per 1M tokens, and image models per generated image.": "All prices are in CNY; text models are billed per 1M tokens, and image models per generated image.",
+    "Text model charges use console real-time group multipliers; image model charges use fixed unit prices in this table.": "Text model charges use console real-time group multipliers; image model charges use fixed unit prices in this table."
   }
 }

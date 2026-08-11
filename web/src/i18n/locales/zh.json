@@ -5462,6 +5462,7 @@
     "Image probe failed.": "图片探测失败。",
     "Official price: 6%": "官方价格的 6%",
     "Save about {{percent}}%": "节省约 {{percent}}%",
+    "Save {{percent}}%": "省{{percent}}%",
     "Input price": "输入价格",
     "Output price": "输出价格",
     "Cache create": "缓存写入",
@@ -5473,6 +5474,8 @@
     "Model pricing": "模型价格",
     "Text models billed by multiplier · Image models billed per image": "文本模型按倍率计费 · 生图模型按张计费",
     "Site price": "本站价",
-    "Official price": "官方价"
+    "Official price": "官方价",
+    "All prices are in CNY; text models are billed per 1M tokens, and image models per generated image.": "所有价格均为人民币 · 文本模型按 1M tokens 计费，生图模型按实际生成图片数量计费",
+    "Text model charges use console real-time group multipliers; image model charges use fixed unit prices in this table.": "文本模型以控制台实时分组倍率为准，生图模型以价格表中的固定单价为准。"
   }
 }

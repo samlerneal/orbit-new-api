@@ -170,6 +170,22 @@ describe('public pricing page layout', () => {
       OWNER_GROUP_DESCRIPTION
     )
     assert.match(container.textContent ?? '', /6% of official price/)
+    assert.match(
+      container.querySelector('[data-pricing-block="title"]')?.className ?? '',
+      /text-center/
+    )
+    assert.match(
+      container.querySelector('[data-pricing-billing-notes]')?.className ?? '',
+      /text-center/
+    )
+    assert.match(
+      container.textContent ?? '',
+      /All prices are in CNY; text models are billed per 1M tokens/
+    )
+    assert.match(
+      container.textContent ?? '',
+      /Text model charges use console real-time group multipliers/
+    )
   })
 
   test('uses one exchange rate for every site and official CNY price', async () => {
@@ -238,9 +254,24 @@ describe('public pricing page layout', () => {
         'Text models billed by multiplier · Image models billed per image',
         'Site price',
         'Official price',
+        'Save {{percent}}%',
+        'All prices are in CNY; text models are billed per 1M tokens, and image models per generated image.',
+        'Text model charges use console real-time group multipliers; image model charges use fixed unit prices in this table.',
       ]) {
         assert.ok(locale.translation[key], `${filename}: missing ${key}`)
       }
     }
+  })
+
+  test('reuses the shared footer after the pricing content without copying its implementation', () => {
+    const source = readFileSync(
+      new URL('../../index.tsx', import.meta.url),
+      'utf8'
+    )
+    assert.match(
+      source,
+      /import \{ Footer \} from '@\/components\/layout\/components\/footer'/
+    )
+    assert.match(source, /<\/PageTransition>\s*<Footer \/>/)
   })
 })

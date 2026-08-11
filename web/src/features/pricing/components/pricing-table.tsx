@@ -121,13 +121,20 @@ function ComparisonPriceCell(props: {
         <span className='text-muted-foreground mr-1 font-sans text-[11px]'>
           {t('Site price')}
         </span>
-        <span>{sitePrice}</span>
+        <span
+          className='text-base font-bold text-amber-600 dark:text-amber-400'
+          data-site-price-value
+        >
+          {sitePrice}
+        </span>
       </div>
       <div className='text-muted-foreground' data-official-price>
         <span className='mr-1 font-sans text-[11px]'>
           {t('Official price')}
         </span>
-        <span>{officialPrice}</span>
+        <span className='line-through' data-official-price-value>
+          {officialPrice}
+        </span>
       </div>
     </div>
   )
@@ -153,6 +160,22 @@ function ComparisonTableHeader() {
         ))}
       </tr>
     </thead>
+  )
+}
+
+export function ComparisonSavingsBadge({
+  savingsPercent,
+}: {
+  savingsPercent: number
+}) {
+  const { t } = useTranslation()
+  return (
+    <span
+      className='inline-flex rounded-full border border-emerald-500/50 bg-emerald-500/15 px-3 py-1 text-sm font-semibold text-emerald-700 dark:border-emerald-400/50 dark:text-emerald-300'
+      data-pricing-savings-badge
+    >
+      {t('Save {{percent}}%', { percent: savingsPercent })}
+    </span>
   )
 }
 
@@ -196,11 +219,13 @@ function ComparisonTableRow(props: {
         )
       )}
       <td className='p-3 whitespace-nowrap'>
-        {props.comparisonVisible && props.result
-          ? t('Save about {{percent}}%', {
-              percent: props.result.savingsPercent,
-            })
-          : '—'}
+        {props.comparisonVisible && props.result ? (
+          <ComparisonSavingsBadge
+            savingsPercent={props.result.savingsPercent}
+          />
+        ) : (
+          '—'
+        )}
       </td>
     </tr>
   )
@@ -278,6 +303,7 @@ export function PricingTable({
   usdExchangeRate,
   onModelClick,
 }: PricingTableProps) {
+  const { t } = useTranslation()
   const comparisonResults = getPublicComparisonResults(models, groups)
   const visibleGroupIds = new Set(
     groups
@@ -309,6 +335,21 @@ export function PricingTable({
           />
         )
       })}
+      <div
+        className='text-muted-foreground mx-auto max-w-3xl space-y-1 px-3 text-center text-xs leading-6 sm:text-sm'
+        data-pricing-billing-notes
+      >
+        <p>
+          {t(
+            'All prices are in CNY; text models are billed per 1M tokens, and image models per generated image.'
+          )}
+        </p>
+        <p>
+          {t(
+            'Text model charges use console real-time group multipliers; image model charges use fixed unit prices in this table.'
+          )}
+        </p>
+      </div>
     </div>
   )
 }
