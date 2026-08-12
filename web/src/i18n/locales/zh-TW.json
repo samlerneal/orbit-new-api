@@ -5335,6 +5335,22 @@
     "Site price": "本站價",
     "Official price": "官方價",
     "All prices are in CNY; text models are billed per 1M tokens, and image models per generated image.": "所有價格均為人民幣；文字模型按 1M tokens 計費，生圖模型按實際生成圖片數量計費。",
-    "Text model charges use console real-time group multipliers; image model charges use fixed unit prices in this table.": "文字模型以控制台即時分組倍率為準，生圖模型以價格表中的固定單價為準。"
+    "Text model charges use console real-time group multipliers; image model charges use fixed unit prices in this table.": "文字模型以控制台即時分組倍率為準，生圖模型以價格表中的固定單價為準。",
+    "Image studio": "生圖",
+    "Describe your image": "描述想生成的畫面",
+    "Describe a scene, subject, style, or mood": "描述場景、主體、風格或氛圍",
+    "Fixed beta settings: gpt-image-2 · 1024×1024 · 1 image · low · PNG": "固定 Beta 規格：gpt-image-2 · 1024×1024 · 1 張 · 低品質 · PNG",
+    "Generate image": "生成圖片",
+    "Stop waiting": "停止等待",
+    "Generating your image…": "正在生成圖片…",
+    "Your generated image will appear here.": "生成的圖片將顯示在這裡。",
+    "Generated image": "生成的圖片",
+    "Download image": "下載圖片",
+    "The request may still be processing. You can generate again when ready.": "請求可能仍在處理中，準備好後可以再次生成。",
+    "We could not generate that image. Please try again later.": "暫時無法生成圖片，請稍後再試。",
+    "A sunlit reading corner with plants": "陽光照亮的綠植閱讀角",
+    "A blue paper-cut mountain landscape": "藍色剪紙風山景",
+    "A small robot watering a garden": "為花園澆水的小機器人",
+    "Prompt must be 1 to 4,000 characters.": "提示詞長度須為 1 至 4,000 個字元。"
   }
 }

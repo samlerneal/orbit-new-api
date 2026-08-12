@@ -69,6 +69,11 @@ export function useTopNavLinks(
           ),
         },
         { title: t('Chat'), href: '/chat', requiresAuth: !isAuthed },
+        {
+          title: t('Image studio'),
+          href: '/image-studio',
+          requiresAuth: !isAuthed,
+        },
       ]
     }
 

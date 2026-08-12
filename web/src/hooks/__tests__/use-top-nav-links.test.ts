@@ -78,12 +78,16 @@ describe('top navigation scope contract', () => {
 
     assert.deepEqual(
       links.map((link) => link.title),
-      ['Console', 'Models', 'Public tutorial', 'Chat']
+      ['Console', 'Models', 'Public tutorial', 'Chat', 'Image studio']
     )
     assert.equal(links.find((link) => link.title === 'Chat')?.href, '/chat')
     assert.equal(
       links.find((link) => link.title === 'Chat')?.requiresAuth,
       true
+    )
+    assert.equal(
+      links.find((link) => link.title === 'Image studio')?.href,
+      '/image-studio'
     )
   })
 

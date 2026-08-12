@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -29,8 +31,65 @@ type ModelRequest struct {
 	Group string `json:"group,omitempty"`
 }
 
+const imageStudioPromptLimit = 4000
+
+type imageStudioRequest struct {
+	Prompt string `json:"prompt"`
+}
+
+func normalizeImageStudioRequest(c *gin.Context) error {
+	var request imageStudioRequest
+	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
+		return errors.New("invalid image studio request")
+	}
+	prompt := strings.TrimSpace(request.Prompt)
+	if prompt == "" || utf8.RuneCountInString(prompt) > imageStudioPromptLimit {
+		return errors.New("invalid image studio prompt")
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return errors.New("invalid image studio request")
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		return errors.New("invalid image studio request")
+	}
+	var raw map[string]any
+	if err := common.Unmarshal(body, &raw); err != nil || len(raw) != 1 {
+		return errors.New("invalid image studio request")
+	}
+	if _, ok := raw["prompt"]; !ok {
+		return errors.New("invalid image studio request")
+	}
+	fixedBody, err := common.Marshal(dto.ImageRequest{
+		Model:          "gpt-image-2",
+		Prompt:         prompt,
+		N:              common.GetPointer(uint(1)),
+		Size:           "1024x1024",
+		Quality:        "low",
+		ResponseFormat: "b64_json",
+		OutputFormat:   []byte(`"png"`),
+		Background:     []byte(`"opaque"`),
+		Stream:         common.GetPointer(false),
+	})
+	if err != nil {
+		return errors.New("image studio unavailable")
+	}
+	common.CleanupBodyStorage(c)
+	c.Request.Body = io.NopCloser(bytes.NewReader(fixedBody))
+	c.Request.ContentLength = int64(len(fixedBody))
+	c.Request.Header.Set("Content-Type", gin.MIMEJSON)
+	return nil
+}
+
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/pg/images/generations") {
+			if err := normalizeImageStudioRequest(c); err != nil {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, "Invalid image generation request", types.ErrorCode("IMAGE_STUDIO_INVALID_REQUEST"))
+				return
+			}
+		}
 		var channel *model.Channel
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
@@ -364,7 +423,11 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			modelRequest.Model = c.Param("model")
 		}
 	}
-	if strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations") {
+	if strings.HasPrefix(c.Request.URL.Path, "/pg/images/generations") {
+		// This endpoint owns its fixed request contract. Never infer the model
+		// from untrusted client input before the controller has normalized it.
+		modelRequest.Model = "gpt-image-2"
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations") {
 		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "dall-e")
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") {
 		//modelRequest.Model = common.GetStringIfEmpty(c.PostForm("model"), "gpt-image-1")
