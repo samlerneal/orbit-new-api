@@ -60,6 +60,7 @@ import type {
 } from './types'
 
 type PublicChatToolbarProps = {
+  embedded: boolean
   onOpenSessions: () => void
 }
 
@@ -78,7 +79,7 @@ function PublicChatToolbar(props: PublicChatToolbarProps) {
     <div className='bg-background/95 flex h-14 shrink-0 items-center gap-3 border-b px-3 backdrop-blur md:px-5'>
       <Button
         aria-label={t('Public chat open conversations')}
-        className='md:hidden'
+        className={props.embedded ? 'xl:hidden' : 'md:hidden'}
         onClick={props.onOpenSessions}
         size='icon-sm'
         variant='outline'
@@ -184,6 +185,7 @@ function PublicChatComposer(props: PublicChatComposerProps) {
 type PublicChatState = ReturnType<typeof usePublicChatState>
 
 type PublicChatReadyProps = {
+  embedded?: boolean
   state: PublicChatState
 }
 
@@ -315,12 +317,27 @@ export function PublicChatReady(props: PublicChatReadyProps) {
   )
 
   return (
-    <div className='flex h-[calc(100svh-7rem)] min-h-0 overflow-hidden md:h-[calc(100svh-5rem)]'>
-      <aside className='bg-muted/20 hidden w-64 shrink-0 border-r md:block'>
+    <div
+      className={
+        props.embedded
+          ? 'flex size-full min-h-0 overflow-hidden'
+          : 'flex h-[calc(100svh-7rem)] min-h-0 overflow-hidden md:h-[calc(100svh-5rem)]'
+      }
+    >
+      <aside
+        className={
+          props.embedded
+            ? 'bg-muted/20 hidden w-64 shrink-0 border-r xl:block'
+            : 'bg-muted/20 hidden w-64 shrink-0 border-r md:block'
+        }
+      >
         {sidebar}
       </aside>
       <main className='flex min-w-0 flex-1 flex-col overflow-hidden'>
-        <PublicChatToolbar onOpenSessions={() => setMobileSessionsOpen(true)} />
+        <PublicChatToolbar
+          embedded={Boolean(props.embedded)}
+          onOpenSessions={() => setMobileSessionsOpen(true)}
+        />
         <PublicChatMessages
           disabled={isGenerating || isLoadingModels || models.length === 0}
           logo={logo || undefined}
@@ -367,7 +384,11 @@ export function PublicChatReady(props: PublicChatReadyProps) {
   )
 }
 
-export function PublicChat() {
+type PublicChatProps = {
+  embedded?: boolean
+}
+
+export function PublicChat(props: PublicChatProps) {
   const userId = useAuthStore((state) => state.auth.user?.id)
   const authReady = useAuthStore(
     (state) => state.auth.bootstrapState === 'complete'
@@ -380,5 +401,5 @@ export function PublicChat() {
     )
   }
 
-  return <PublicChatReady state={publicChatState} />
+  return <PublicChatReady embedded={props.embedded} state={publicChatState} />
 }

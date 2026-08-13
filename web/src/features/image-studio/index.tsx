@@ -1,6 +1,15 @@
 import { generateImage } from './api'
 import { ImageStudioWorkbench } from './components/image-studio-workbench'
 
-export function ImageStudio() {
-  return <ImageStudioWorkbench requestImage={generateImage} />
+type ImageStudioProps = {
+  embedded?: boolean
+}
+
+export function ImageStudio(props: ImageStudioProps) {
+  return (
+    <ImageStudioWorkbench
+      embedded={props.embedded}
+      requestImage={generateImage}
+    />
+  )
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, describe, test } from 'node:test'
 
 import { GlobalRegistrator } from '@happy-dom/global-registrator'
-import { createElement } from 'react'
+import { act, createElement } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 
@@ -20,11 +20,9 @@ const pendingRequest: ImageGenerationRequest = (prompt, signal) => {
   return new Promise(() => undefined)
 }
 
-function renderWorkbench() {
+function renderWorkbench(requestImage = pendingRequest) {
   flushSync(() =>
-    root.render(
-      createElement(ImageStudioWorkbench, { requestImage: pendingRequest })
-    )
+    root.render(createElement(ImageStudioWorkbench, { requestImage }))
   )
 }
 
@@ -105,6 +103,32 @@ describe('image studio workbench', () => {
     flushSync(() => setTextareaValue('😀'.repeat(4001)))
     assert.equal(generateButton().disabled, true)
     assert.match(container.textContent ?? '', /4001\/4000/)
+  })
+
+  test('keeps the successful image frame separate from the accessible download action', async () => {
+    renderWorkbench(async () => ({
+      data: [{ b64_json: 'iVBORw0KGgo=' }],
+    }))
+    flushSync(() => setTextareaValue('A fixed local test image'))
+    flushSync(() => generateButton().click())
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const stage = container.querySelector('[data-image-studio-stage]')
+    const image = stage?.querySelector('img[alt="Generated image"]')
+    const download = stage?.querySelector('a[download="image-studio.png"]')
+    assert.ok(stage)
+    assert.ok(image)
+    assert.ok(download)
+    assert.equal(download.textContent, 'Download image')
+    assert.match(download.className, /min-h-11/)
+
+    const imageFrame = image.parentElement
+    assert.ok(imageFrame)
+    assert.equal(imageFrame.classList.contains('aspect-square'), true)
+    assert.equal(imageFrame.contains(download), false)
+    assert.equal(stage.contains(download), true)
   })
 
   test('renders the fixed recipe with one accessible model option and no key or size input', async () => {

@@ -31,6 +31,7 @@ const configurationSections = [
 ]
 
 interface ImageStudioWorkbenchProps {
+  embedded?: boolean
   requestImage: ImageGenerationRequest
 }
 
@@ -126,14 +127,16 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
   } else if (state.status === 'success') {
     stageTitle = t('Generated image')
     stageContent = (
-      <div className='relative z-10 w-full max-w-[min(100%,38rem)]'>
-        <img
-          className='aspect-square w-full rounded-xl border object-cover shadow-2xl'
-          src={state.imageUrl}
-          alt={t('Generated image')}
-        />
+      <div className='relative z-10 flex w-full max-w-[min(100%,38rem)] flex-col gap-4'>
+        <div className='aspect-square w-full overflow-hidden rounded-xl border'>
+          <img
+            className='size-full object-cover shadow-2xl'
+            src={state.imageUrl}
+            alt={t('Generated image')}
+          />
+        </div>
         <a
-          className='bg-primary text-primary-foreground mt-4 inline-flex min-h-11 items-center rounded-lg px-4 py-2 text-sm font-medium shadow-[0_12px_30px_hsl(var(--primary)/.22)]'
+          className='bg-primary text-primary-foreground inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2 text-sm font-medium shadow-[0_12px_30px_hsl(var(--primary)/.22)]'
           href={state.imageUrl}
           download='image-studio.png'
         >
@@ -144,7 +147,13 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
   }
 
   return (
-    <main className='min-h-[calc(100vh-4rem)] overflow-x-hidden bg-[radial-gradient(circle_at_76%_8%,hsl(var(--primary)/.22),transparent_28rem),radial-gradient(circle_at_15%_87%,hsl(var(--primary)/.1),transparent_24rem),linear-gradient(hsl(var(--border)/.25)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.25)_1px,transparent_1px)] bg-[size:auto,auto,32px_32px,32px_32px] px-3 pt-14 pb-8 sm:px-5 md:px-6 md:pt-16'>
+    <main
+      className={
+        props.embedded
+          ? 'size-full overflow-x-hidden overflow-y-auto bg-[radial-gradient(circle_at_76%_8%,hsl(var(--primary)/.22),transparent_28rem),radial-gradient(circle_at_15%_87%,hsl(var(--primary)/.1),transparent_24rem),linear-gradient(hsl(var(--border)/.25)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.25)_1px,transparent_1px)] bg-[size:auto,auto,32px_32px,32px_32px] px-3 py-5 sm:px-5 md:px-6'
+          : 'min-h-[calc(100vh-4rem)] overflow-x-hidden bg-[radial-gradient(circle_at_76%_8%,hsl(var(--primary)/.22),transparent_28rem),radial-gradient(circle_at_15%_87%,hsl(var(--primary)/.1),transparent_24rem),linear-gradient(hsl(var(--border)/.25)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.25)_1px,transparent_1px)] bg-[size:auto,auto,32px_32px,32px_32px] px-3 pt-14 pb-8 sm:px-5 md:px-6 md:pt-16'
+      }
+    >
       <div className='mx-auto max-w-7xl' data-image-studio-page>
         <div
           className='grid min-w-0 gap-4 min-[917px]:grid-cols-[340px_minmax(0,1fr)] lg:grid-cols-[390px_minmax(0,1fr)] lg:gap-5'
@@ -377,7 +386,13 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
               </div>
               <span className='text-muted-foreground text-xs'>1024×1024</span>
             </div>
-            <div className='border-border/90 ring-primary/10 relative flex aspect-square w-full max-w-[min(100%,42rem)] items-center justify-center self-center overflow-hidden rounded-xl border border-dashed bg-[radial-gradient(circle_at_50%_38%,hsl(var(--primary)/.16),transparent_34%),linear-gradient(hsl(var(--border)/.3)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.3)_1px,transparent_1px)] bg-[size:auto,22px_22px,22px_22px] p-5 ring-1 ring-inset'>
+            <div
+              className={
+                state.status === 'success'
+                  ? 'border-border/90 ring-primary/10 relative flex w-full max-w-[min(100%,42rem)] flex-col items-center justify-center self-center rounded-xl border border-dashed bg-[radial-gradient(circle_at_50%_38%,hsl(var(--primary)/.16),transparent_34%),linear-gradient(hsl(var(--border)/.3)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.3)_1px,transparent_1px)] bg-[size:auto,22px_22px,22px_22px] p-5 ring-1 ring-inset'
+                  : 'border-border/90 ring-primary/10 relative flex aspect-square w-full max-w-[min(100%,42rem)] items-center justify-center self-center overflow-hidden rounded-xl border border-dashed bg-[radial-gradient(circle_at_50%_38%,hsl(var(--primary)/.16),transparent_34%),linear-gradient(hsl(var(--border)/.3)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.3)_1px,transparent_1px)] bg-[size:auto,22px_22px,22px_22px] p-5 ring-1 ring-inset'
+              }
+            >
               {stageContent}
             </div>
           </section>
