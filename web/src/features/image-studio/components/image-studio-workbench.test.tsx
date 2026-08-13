@@ -30,7 +30,7 @@ function renderWorkbench() {
 
 function generateButton() {
   const button = [...container.querySelectorAll('button')].find(
-    (candidate) => candidate.textContent === 'Generate image'
+    (candidate) => candidate.textContent === 'Generate now'
   )
   assert.ok(button)
   return button as HTMLButtonElement
@@ -90,7 +90,7 @@ describe('image studio workbench', () => {
     )
     assert.equal(
       [...container.querySelectorAll('button')].some(
-        (candidate) => candidate.textContent === 'Generate image'
+        (candidate) => candidate.textContent === 'Generate now'
       ),
       false
     )
@@ -107,20 +107,38 @@ describe('image studio workbench', () => {
     assert.match(container.textContent ?? '', /4001\/4000/)
   })
 
-  test('renders fixed settings without model, size, or key controls', async () => {
+  test('renders the fixed recipe with one accessible model option and no key or size input', async () => {
     renderWorkbench()
-    assert.match(
-      container.textContent ?? '',
-      /Fixed beta settings: gpt-image-2 · 1024×1024 · 1 image · low · PNG/
+    assert.match(container.textContent ?? '', /Turn ideas into images/)
+    assert.match(container.textContent ?? '', /1 image/)
+    assert.match(container.textContent ?? '', /Text to image/)
+    assert.match(container.textContent ?? '', /Image to image/)
+    assert.match(container.textContent ?? '', /Billing notice:/)
+    assert.equal(
+      container.querySelector('strong')?.textContent,
+      'Billing notice:'
     )
-    assert.equal(container.querySelectorAll('select').length, 0)
+    const modelControl = container.querySelector('#image-model')
+    assert.ok(modelControl instanceof HTMLSelectElement)
+    assert.equal(modelControl.options.length, 1)
+    assert.equal(modelControl.value, 'gpt-image-2')
     assert.equal(container.querySelector('input[type="file"]'), null)
     assert.equal(container.querySelector('input[name*="key" i]'), null)
     assert.equal(container.querySelector('input[name*="model" i]'), null)
     assert.equal(container.querySelector('input[name*="size" i]'), null)
   })
 
-  test('renders a single-column mobile layout and 390px desktop rail with result stage', async () => {
+  test('localizes the hierarchy, action, and billing notice', async () => {
+    await i18n.changeLanguage('zh')
+    renderWorkbench()
+    assert.match(container.textContent ?? '', /把想法变成图片/)
+    assert.match(container.textContent ?? '', /1 张/)
+    assert.match(container.textContent ?? '', /立即生成/)
+    assert.match(container.textContent ?? '', /计费说明：当前 Beta/)
+    await i18n.changeLanguage('en')
+  })
+
+  test('keeps a single prompt control, data-driven settings, and a separate result stage', async () => {
     renderWorkbench()
     const layout = container.querySelector('[data-image-studio-layout]')
     const config = container.querySelector('[data-image-studio-config]')
@@ -128,11 +146,25 @@ describe('image studio workbench', () => {
     assert.ok(layout)
     assert.ok(config)
     assert.ok(stage)
-    assert.match(
-      layout.className,
-      /grid min-w-0 gap-4 lg:grid-cols-\[390px_minmax\(0,1fr\)\]/
+    assert.equal(layout.children.length, 2)
+    assert.equal(container.querySelectorAll('#image-prompt').length, 1)
+    assert.equal(stage.getAttribute('aria-live'), 'polite')
+    const settings = container.querySelector(
+      '[data-image-studio-fixed-settings]'
     )
-    assert.match(stage.className, /min-w-0/)
-    assert.ok(container.querySelector('[data-image-studio-fixed-settings]'))
+    assert.ok(settings)
+    const disabledControls = settings.querySelectorAll('button[disabled]')
+    assert.equal(disabledControls.length, 8)
+    const firstDisabledControl = disabledControls[0]
+    if (!(firstDisabledControl instanceof HTMLButtonElement)) {
+      throw new Error('Expected the first disabled control to be a button.')
+    }
+    firstDisabledControl.click()
+    assert.equal(requests.length, 0)
+    assert.equal(container.querySelectorAll('button[disabled]').length, 9)
+    assert.equal(container.querySelectorAll('[role="tooltip"]').length, 9)
+    assert.match(stage.textContent ?? '', /AI image studio/)
+    assert.match(stage.textContent ?? '', /Generation result/)
+    assert.match(stage.textContent ?? '', /Ready/)
   })
 })
