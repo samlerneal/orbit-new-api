@@ -1,12 +1,15 @@
-import { useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   useImageGeneration,
   type ImageGenerationRequest,
 } from '../hooks/use-image-generation'
+import { useImageHistory } from '../hooks/use-image-history'
+import type { ImageHistoryItem } from '../lib/image-history'
 
 const examples = [
   'A sunlit reading corner with plants',
@@ -70,12 +73,207 @@ function DisabledOption(props: DisabledOptionProps) {
   )
 }
 
+function useHistoryObjectUrls(history: ImageHistoryItem[]) {
+  const [urls, setUrls] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    const nextUrls = Object.fromEntries(
+      history.map((item) => [item.id, URL.createObjectURL(item.blob)])
+    )
+    setUrls(nextUrls)
+    return () => {
+      Object.values(nextUrls).forEach((url) => URL.revokeObjectURL(url))
+    }
+  }, [history])
+
+  return urls
+}
+
+interface ImageHistoryUrlScopeProps {
+  children: (historyUrls: Record<string, string>) => ReactNode
+  history: ImageHistoryItem[]
+}
+
+export function ImageHistoryUrlScope(props: ImageHistoryUrlScopeProps) {
+  const historyUrls = useHistoryObjectUrls(props.history)
+  return props.children(historyUrls)
+}
+
+interface ImageHistoryPanelProps {
+  history: ImageHistoryItem[]
+  historyUrls: Record<string, string>
+  onClear: () => void
+  onRemove: (id: string) => void
+  onSelect: (id: string) => void
+  saveWarning: boolean
+  selectedHistoryId: string | null
+}
+
+export function ImageHistoryPanel(props: ImageHistoryPanelProps) {
+  const { t } = useTranslation()
+
+  return (
+    <section
+      className='border-border/70 mt-4 min-w-0 border-t pt-3'
+      aria-label={t('Image history')}
+    >
+      <div className='mb-2 flex items-center justify-between gap-3'>
+        <div>
+          <h3 className='text-sm font-medium'>{t('Image history')}</h3>
+          {props.saveWarning ? (
+            <p className='text-muted-foreground text-xs' role='status'>
+              {t('This image was not saved to history.')}
+            </p>
+          ) : null}
+        </div>
+        {props.history.length > 0 ? (
+          <Button
+            variant='outline'
+            className='min-h-9 px-3 text-xs'
+            onClick={() => {
+              if (window.confirm(t('Clear all image history?'))) {
+                props.onClear()
+              }
+            }}
+          >
+            {t('Clear all')}
+          </Button>
+        ) : null}
+      </div>
+      {props.history.length === 0 ? (
+        <p className='text-muted-foreground text-sm'>
+          {t('Your saved images will appear here.')}
+        </p>
+      ) : (
+        <div
+          className='flex min-w-0 gap-2 overflow-x-auto pb-1'
+          data-image-history-list
+        >
+          {props.history.map((item) => (
+            <div className='relative w-24 shrink-0' key={item.id}>
+              <button
+                className={`w-full overflow-hidden rounded-lg border ${props.selectedHistoryId === item.id ? 'border-primary ring-primary/30 ring-2' : 'border-border/70'}`}
+                type='button'
+                onClick={() => props.onSelect(item.id)}
+                aria-pressed={props.selectedHistoryId === item.id}
+                aria-label={`${t('View saved image')}: ${item.prompt.slice(0, 40)}`}
+              >
+                <img
+                  className='aspect-square w-full object-cover'
+                  src={props.historyUrls[item.id]}
+                  alt={item.prompt}
+                />
+              </button>
+              <p
+                className='text-muted-foreground mt-1 truncate text-xs'
+                title={item.prompt}
+              >
+                {item.prompt}
+              </p>
+              <p className='text-muted-foreground truncate text-[11px]'>
+                {new Date(item.createdAt).toLocaleString()}
+              </p>
+              <button
+                className='text-muted-foreground hover:text-destructive min-h-8 text-xs'
+                type='button'
+                onClick={() => props.onRemove(item.id)}
+              >
+                {t('Delete')}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
   const { t } = useTranslation()
   const [prompt, setPrompt] = useState('')
-  const { state, generate, stopWaiting } = useImageGeneration(
-    props.requestImage
+  const authOwnerId = useAuthStore((state) => state.auth.user?.id ?? null)
+  const authReady = useAuthStore(
+    (state) => state.auth.bootstrapState === 'complete'
   )
+  const generationOwnerRef = useRef<number | null>(null)
+  const invalidateCurrentImageRef = useRef<() => void>(() => undefined)
+  const [currentImageOwnerId, setCurrentImageOwnerId] = useState<number | null>(
+    null
+  )
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(
+    null
+  )
+  const {
+    addGeneratedImage,
+    history,
+    removeAllHistory,
+    removeHistoryItem,
+    saveWarning,
+  } = useImageHistory()
+  const historyUrls = useHistoryObjectUrls(history)
+  const handleGeneratedImage = useCallback(
+    (
+      generatedImage: Parameters<typeof addGeneratedImage>[0],
+      generatedPrompt: string
+    ) => {
+      const ownerIdAtRequest = generationOwnerRef.current
+      const currentAuth = useAuthStore.getState().auth
+      const currentOwnerId = currentAuth.user?.id ?? null
+      if (
+        currentAuth.bootstrapState !== 'complete' ||
+        currentOwnerId === null ||
+        ownerIdAtRequest === null ||
+        ownerIdAtRequest !== currentOwnerId
+      ) {
+        invalidateCurrentImageRef.current()
+        return
+      }
+      setCurrentImageOwnerId(ownerIdAtRequest)
+      setSelectedHistoryId(null)
+      void addGeneratedImage(generatedImage, generatedPrompt)
+    },
+    [addGeneratedImage]
+  )
+  const { state, generate, invalidateCurrentImage, stopWaiting } =
+    useImageGeneration(props.requestImage, handleGeneratedImage)
+  invalidateCurrentImageRef.current = invalidateCurrentImage
+  useEffect(() => {
+    if (state.status !== 'success') return
+    if (
+      authReady &&
+      authOwnerId !== null &&
+      currentImageOwnerId === authOwnerId
+    ) {
+      return
+    }
+    invalidateCurrentImage()
+    setCurrentImageOwnerId(null)
+  }, [
+    authOwnerId,
+    authReady,
+    currentImageOwnerId,
+    invalidateCurrentImage,
+    state.status,
+  ])
+  useEffect(() => {
+    setSelectedHistoryId((currentId) => {
+      if (currentId && history.some((item) => item.id === currentId)) {
+        return currentId
+      }
+      return history[0]?.id ?? null
+    })
+  }, [history])
+  const selectedHistoryItem = history.find(
+    (item) => item.id === selectedHistoryId
+  )
+  const selectedHistoryUrl = selectedHistoryItem
+    ? historyUrls[selectedHistoryItem.id]
+    : null
+  const currentImageUrl =
+    authReady && authOwnerId !== null && currentImageOwnerId === authOwnerId
+      ? state.imageUrl
+      : null
+  const displayedImageUrl = selectedHistoryUrl ?? currentImageUrl
   const isGenerating = state.status === 'generating'
   const promptLength = [...prompt.trim()].length
   const isPromptValid = promptLength > 0 && promptLength <= 4000
@@ -124,24 +322,36 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
         <p className='text-sm leading-6'>{t(state.error)}</p>
       </div>
     )
-  } else if (state.status === 'success') {
+  } else if (displayedImageUrl) {
     stageTitle = t('Generated image')
     stageContent = (
       <div className='relative z-10 flex w-full max-w-[min(100%,38rem)] flex-col gap-4'>
         <div className='aspect-square w-full overflow-hidden rounded-xl border'>
           <img
             className='size-full object-cover shadow-2xl'
-            src={state.imageUrl}
+            src={displayedImageUrl}
             alt={t('Generated image')}
           />
         </div>
         <a
           className='bg-primary text-primary-foreground inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2 text-sm font-medium shadow-[0_12px_30px_hsl(var(--primary)/.22)]'
-          href={state.imageUrl}
+          href={displayedImageUrl}
           download='image-studio.png'
         >
           {t('Download image')}
         </a>
+        {selectedHistoryItem ? (
+          <Button
+            variant='outline'
+            className='min-h-11'
+            onClick={() => {
+              setSelectedHistoryId(null)
+              void removeHistoryItem(selectedHistoryItem.id)
+            }}
+          >
+            {t('Delete')}
+          </Button>
+        ) : null}
       </div>
     )
   }
@@ -357,7 +567,11 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
               <Button
                 className='mt-4 min-h-11 w-full rounded-xl bg-emerald-500 text-slate-950 shadow-[0_14px_34px_rgb(16_185_129/.24)] hover:bg-emerald-400 focus-visible:ring-emerald-500/50'
                 disabled={!isPromptValid}
-                onClick={() => void generate(prompt)}
+                onClick={() => {
+                  generationOwnerRef.current = authReady ? authOwnerId : null
+                  setCurrentImageOwnerId(null)
+                  void generate(prompt)
+                }}
               >
                 {t('Generate now')}
               </Button>
@@ -388,13 +602,25 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
             </div>
             <div
               className={
-                state.status === 'success'
+                displayedImageUrl
                   ? 'border-border/90 ring-primary/10 relative flex w-full max-w-[min(100%,42rem)] flex-col items-center justify-center self-center rounded-xl border border-dashed bg-[radial-gradient(circle_at_50%_38%,hsl(var(--primary)/.16),transparent_34%),linear-gradient(hsl(var(--border)/.3)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.3)_1px,transparent_1px)] bg-[size:auto,22px_22px,22px_22px] p-5 ring-1 ring-inset'
                   : 'border-border/90 ring-primary/10 relative flex aspect-square w-full max-w-[min(100%,42rem)] items-center justify-center self-center overflow-hidden rounded-xl border border-dashed bg-[radial-gradient(circle_at_50%_38%,hsl(var(--primary)/.16),transparent_34%),linear-gradient(hsl(var(--border)/.3)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.3)_1px,transparent_1px)] bg-[size:auto,22px_22px,22px_22px] p-5 ring-1 ring-inset'
               }
             >
               {stageContent}
             </div>
+            <ImageHistoryPanel
+              history={history}
+              historyUrls={historyUrls}
+              onClear={() => void removeAllHistory()}
+              onRemove={(id) => {
+                if (selectedHistoryId === id) setSelectedHistoryId(null)
+                void removeHistoryItem(id)
+              }}
+              onSelect={setSelectedHistoryId}
+              saveWarning={saveWarning}
+              selectedHistoryId={selectedHistoryId}
+            />
           </section>
         </div>
       </div>

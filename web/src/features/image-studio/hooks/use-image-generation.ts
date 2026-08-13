@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 
-import {
-  createImageObjectUrl,
-  revokeImageObjectUrl,
-} from '../lib/image-generation'
-import type { ImageGenerationResponse, ImageGenerationState } from '../types'
+import { createImageBlob, revokeImageObjectUrl } from '../lib/image-generation'
+import type {
+  GeneratedImage,
+  ImageGenerationResponse,
+  ImageGenerationState,
+} from '../types'
 
 const initialState: ImageGenerationState = {
   status: 'idle',
@@ -17,11 +18,18 @@ export type ImageGenerationRequest = (
   signal: AbortSignal
 ) => Promise<ImageGenerationResponse>
 
+export type ImageGenerationSuccessHandler = (
+  generatedImage: GeneratedImage,
+  prompt: string
+) => void
+
 export function createImageGenerationLifecycle(
   requestImage: ImageGenerationRequest,
-  onStateChange: (state: ImageGenerationState) => void
+  onStateChange: (state: ImageGenerationState) => void,
+  onSuccess?: ImageGenerationSuccessHandler
 ) {
   let currentRequest = requestImage
+  let currentSuccessHandler = onSuccess
   let controller: AbortController | null = null
   let imageUrl: string | null = null
   let state = initialState
@@ -45,8 +53,15 @@ export function createImageGenerationLifecycle(
     try {
       const response = await currentRequest(prompt, activeController.signal)
       if (controller !== activeController) return
-      imageUrl = createImageObjectUrl(response.data?.[0]?.b64_json || '')
-      publishState({ status: 'success', imageUrl, error: null })
+      const blob = createImageBlob(response.data?.[0]?.b64_json || '')
+      imageUrl = URL.createObjectURL(blob)
+      const generatedImage = {
+        blob,
+        generationId: crypto.randomUUID(),
+        imageUrl,
+      }
+      publishState({ status: 'success', imageUrl, error: null, generatedImage })
+      currentSuccessHandler?.(generatedImage, prompt)
     } catch {
       if (controller !== activeController) return
       publishState({
@@ -77,20 +92,35 @@ export function createImageGenerationLifecycle(
     controller?.abort()
     controller = null
     clearImage()
+    publishState(initialState)
+  }
+
+  const invalidateCurrentImage = () => {
+    clearImage()
+    publishState(initialState)
   }
 
   return {
     dispose,
     generate,
     getState: () => state,
+    invalidateCurrentImage,
     setRequestImage: (nextRequest: ImageGenerationRequest) => {
       currentRequest = nextRequest
+    },
+    setSuccessHandler: (
+      nextSuccessHandler: ImageGenerationSuccessHandler | undefined
+    ) => {
+      currentSuccessHandler = nextSuccessHandler
     },
     stopWaiting,
   }
 }
 
-export function useImageGeneration(requestImage: ImageGenerationRequest) {
+export function useImageGeneration(
+  requestImage: ImageGenerationRequest,
+  onSuccess?: ImageGenerationSuccessHandler
+) {
   const [state, setState] = useState<ImageGenerationState>(initialState)
   const lifecycleRef = useRef<ReturnType<
     typeof createImageGenerationLifecycle
@@ -99,16 +129,19 @@ export function useImageGeneration(requestImage: ImageGenerationRequest) {
   if (!lifecycleRef.current) {
     lifecycleRef.current = createImageGenerationLifecycle(
       requestImage,
-      setState
+      setState,
+      onSuccess
     )
   }
   lifecycleRef.current.setRequestImage(requestImage)
+  lifecycleRef.current.setSuccessHandler(onSuccess)
 
   useEffect(() => () => lifecycleRef.current?.dispose(), [])
 
   return {
     state,
     generate: lifecycleRef.current.generate,
+    invalidateCurrentImage: lifecycleRef.current.invalidateCurrentImage,
     stopWaiting: lifecycleRef.current.stopWaiting,
   }
 }

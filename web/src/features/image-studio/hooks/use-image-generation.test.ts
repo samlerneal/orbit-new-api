@@ -64,11 +64,8 @@ describe('image generation request lifecycle', () => {
     )
 
     await lifecycle.generate('success')
-    assert.deepEqual(lifecycle.getState(), {
-      status: 'success',
-      imageUrl: 'blob:generated',
-      error: null,
-    })
+    assert.equal(lifecycle.getState().status, 'success')
+    assert.equal(lifecycle.getState().imageUrl, 'blob:generated')
     await lifecycle.generate('failure')
     assert.equal(lifecycle.getState().status, 'error')
     void lifecycle.generate('stop')
@@ -80,6 +77,27 @@ describe('image generation request lifecycle', () => {
     pending.reject(new DOMException('aborted', 'AbortError'))
     await Promise.resolve()
     assert.equal(requests, 3)
+  })
+
+  test('persists only the single decoded blob from a successful response', async () => {
+    const successfulImages: Array<{ generationId: string; prompt: string }> = []
+    mock.method(URL, 'createObjectURL', () => 'blob:generated')
+    mock.method(crypto, 'randomUUID', () => 'fixed-generation-id')
+    const lifecycle = createImageGenerationLifecycle(
+      () => Promise.resolve({ data: [{ b64_json: 'iVBORw0KGgo=' }] }),
+      () => undefined,
+      (image, prompt) => {
+        successfulImages.push({ generationId: image.generationId, prompt })
+        assert.equal(image.blob.type, 'image/png')
+        assert.equal(image.imageUrl, 'blob:generated')
+      }
+    )
+
+    await lifecycle.generate('A local fixture')
+
+    assert.deepEqual(successfulImages, [
+      { generationId: 'fixed-generation-id', prompt: 'A local fixture' },
+    ])
   })
 
   test('revokes replaced and disposed image object URLs', async () => {
@@ -99,5 +117,22 @@ describe('image generation request lifecycle', () => {
     assert.deepEqual(revoked, ['blob:1'])
     lifecycle.dispose()
     assert.deepEqual(revoked, ['blob:1', 'blob:2'])
+  })
+
+  test('revokes the current URL exactly once when its owner becomes invalid', async () => {
+    const revoked: string[] = []
+    mock.method(URL, 'createObjectURL', () => 'blob:current')
+    mock.method(URL, 'revokeObjectURL', (url: string) => revoked.push(url))
+    const lifecycle = createImageGenerationLifecycle(
+      () => Promise.resolve({ data: [{ b64_json: 'iVBORw0KGgo=' }] }),
+      () => undefined
+    )
+
+    await lifecycle.generate('local fixture')
+    lifecycle.invalidateCurrentImage()
+    lifecycle.invalidateCurrentImage()
+
+    assert.deepEqual(revoked, ['blob:current'])
+    assert.equal(lifecycle.getState().status, 'idle')
   })
 })

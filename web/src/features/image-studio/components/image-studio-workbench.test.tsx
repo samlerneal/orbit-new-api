@@ -7,9 +7,15 @@ import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 
 import i18n from '@/i18n/config'
+import { useAuthStore } from '@/stores/auth-store'
 
 import type { ImageGenerationRequest } from '../hooks/use-image-generation'
-import { ImageStudioWorkbench } from './image-studio-workbench'
+import type { ImageHistoryItem } from '../lib/image-history'
+import {
+  ImageHistoryPanel,
+  ImageHistoryUrlScope,
+  ImageStudioWorkbench,
+} from './image-studio-workbench'
 
 let container: HTMLDivElement
 let root: Root
@@ -20,9 +26,50 @@ const pendingRequest: ImageGenerationRequest = (prompt, signal) => {
   return new Promise(() => undefined)
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}
+
 function renderWorkbench(requestImage = pendingRequest) {
   flushSync(() =>
     root.render(createElement(ImageStudioWorkbench, { requestImage }))
+  )
+}
+
+function createHistoryItem(id: string): ImageHistoryItem {
+  return {
+    blob: new Blob([new Uint8Array([1])], { type: 'image/png' }),
+    createdAt: 1,
+    generationId: `generation-${id}`,
+    id,
+    model: 'gpt-image-2',
+    ownerId: 47,
+    prompt: `Saved prompt ${id}`,
+    size: '1024×1024 PNG',
+  }
+}
+
+function HistoryUrlHarness(props: { history: ImageHistoryItem[] }) {
+  return (
+    <ImageHistoryUrlScope history={props.history}>
+      {(urls: Record<string, string>) =>
+        createElement(
+          'div',
+          null,
+          props.history.map((item) =>
+            createElement('img', {
+              alt: item.id,
+              key: item.id,
+              src: urls[item.id],
+            })
+          )
+        )
+      }
+    </ImageHistoryUrlScope>
   )
 }
 
@@ -61,10 +108,15 @@ beforeEach(() => {
   document.body.replaceChildren(container)
   root = createRoot(container)
   requests = []
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 47, role: 1, username: 'image-history-test' })
+  useAuthStore.getState().auth.setBootstrapState('complete')
 })
 
 afterEach(async () => {
   flushSync(() => root.unmount())
+  useAuthStore.getState().auth.reset('idle')
   container.remove()
 })
 
@@ -129,6 +181,190 @@ describe('image studio workbench', () => {
     assert.equal(imageFrame.classList.contains('aspect-square'), true)
     assert.equal(imageFrame.contains(download), false)
     assert.equal(stage.contains(download), true)
+  })
+
+  test('removes the current image from the DOM after the authenticated owner changes', async () => {
+    const revoked: string[] = []
+    const originalCreateObjectUrl = URL.createObjectURL
+    const originalRevokeObjectUrl = URL.revokeObjectURL
+    URL.createObjectURL = () => 'blob:current-owner'
+    URL.revokeObjectURL = (url) => revoked.push(url)
+    try {
+      renderWorkbench(async () => ({
+        data: [{ b64_json: 'iVBORw0KGgo=' }],
+      }))
+      flushSync(() => setTextareaValue('A private local fixture'))
+      flushSync(() => generateButton().click())
+      await act(async () => {
+        await Promise.resolve()
+      })
+      assert.ok(container.querySelector('img[alt="Generated image"]'))
+
+      flushSync(() => {
+        useAuthStore.getState().auth.setUser({
+          id: 48,
+          role: 1,
+          username: 'next-owner',
+        })
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+      assert.equal(container.querySelector('img[alt="Generated image"]'), null)
+      assert.deepEqual(revoked, ['blob:current-owner'])
+    } finally {
+      URL.createObjectURL = originalCreateObjectUrl
+      URL.revokeObjectURL = originalRevokeObjectUrl
+    }
+  })
+
+  test('fails closed when a deferred success resolves after changing owners or logging out', async () => {
+    const revoked: string[] = []
+    const originalCreateObjectUrl = URL.createObjectURL
+    const originalRevokeObjectUrl = URL.revokeObjectURL
+    let createdUrls = 0
+    URL.createObjectURL = () => `blob:late-${++createdUrls}`
+    URL.revokeObjectURL = (url) => revoked.push(url)
+    try {
+      for (const nextAuth of [
+        { id: 48, bootstrapState: 'complete' as const },
+        { id: null, bootstrapState: 'complete' as const },
+      ]) {
+        requests = []
+        const response = deferred<{
+          data: Array<{ b64_json: string }>
+        }>()
+        renderWorkbench((prompt, signal) => {
+          requests.push({ prompt, signal })
+          return response.promise
+        })
+        flushSync(() => setTextareaValue('A deferred local fixture'))
+        flushSync(() => generateButton().click())
+        assert.equal(requests.length, 1)
+        assert.equal(requests[0]?.prompt, 'A deferred local fixture')
+        assert.equal(requests[0]?.signal.aborted, false)
+
+        flushSync(() => {
+          useAuthStore
+            .getState()
+            .auth.setUser(
+              nextAuth.id === null
+                ? null
+                : { id: nextAuth.id, role: 1, username: 'next-owner' }
+            )
+          useAuthStore
+            .getState()
+            .auth.setBootstrapState(nextAuth.bootstrapState)
+        })
+        response.resolve({ data: [{ b64_json: 'iVBORw0KGgo=' }] })
+        await act(async () => {
+          await Promise.resolve()
+        })
+
+        assert.equal(requests.length, 1)
+        assert.equal(
+          container.querySelector('img[alt="Generated image"]'),
+          null
+        )
+        assert.equal(
+          container.querySelectorAll('[data-image-history-list] img').length,
+          0
+        )
+        useAuthStore
+          .getState()
+          .auth.setUser({ id: 47, role: 1, username: 'image-history-test' })
+      }
+      assert.deepEqual(revoked, ['blob:late-1', 'blob:late-2'])
+    } finally {
+      URL.createObjectURL = originalCreateObjectUrl
+      URL.revokeObjectURL = originalRevokeObjectUrl
+    }
+  })
+
+  test('selects, deletes, and confirms clearing saved image history through real controls', () => {
+    const selected: string[] = []
+    const removed: string[] = []
+    let clearCalls = 0
+    const item = createHistoryItem('one')
+    flushSync(() =>
+      root.render(
+        createElement(ImageHistoryPanel, {
+          history: [item],
+          historyUrls: { one: 'blob:saved' },
+          onClear: () => {
+            clearCalls += 1
+          },
+          onRemove: (id) => removed.push(id),
+          onSelect: (id) => selected.push(id),
+          saveWarning: false,
+          selectedHistoryId: null,
+        })
+      )
+    )
+
+    const selection = container.querySelector(
+      'button[aria-label^="View saved image"]'
+    ) as HTMLButtonElement
+    assert.ok(selection)
+    const historyList = container.querySelector('[data-image-history-list]')
+    assert.ok(historyList)
+    assert.match(historyList.className, /overflow-x-auto/)
+    assert.match(historyList.className, /min-w-0/)
+    selection.click()
+    assert.deepEqual(selected, ['one'])
+    const deleteButton = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Delete'
+    )
+    assert.ok(deleteButton)
+    deleteButton.click()
+    assert.deepEqual(removed, ['one'])
+
+    const originalConfirm = window.confirm
+    window.confirm = () => false
+    try {
+      const clearButton = [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Clear all'
+      )
+      assert.ok(clearButton)
+      clearButton.click()
+      assert.equal(clearCalls, 0)
+      window.confirm = () => true
+      clearButton.click()
+      assert.equal(clearCalls, 1)
+    } finally {
+      window.confirm = originalConfirm
+    }
+  })
+
+  test('reclaims history URLs when the selected list is replaced and unmounted', () => {
+    const revoked: string[] = []
+    const originalCreateObjectUrl = URL.createObjectURL
+    const originalRevokeObjectUrl = URL.revokeObjectURL
+    let counter = 0
+    URL.createObjectURL = () => `blob:history-${++counter}`
+    URL.revokeObjectURL = (url) => revoked.push(url)
+    try {
+      flushSync(() =>
+        root.render(
+          createElement(HistoryUrlHarness, {
+            history: [createHistoryItem('one')],
+          })
+        )
+      )
+      flushSync(() =>
+        root.render(
+          createElement(HistoryUrlHarness, {
+            history: [createHistoryItem('two')],
+          })
+        )
+      )
+      flushSync(() => root.unmount())
+      assert.deepEqual(revoked, ['blob:history-1', 'blob:history-2'])
+      root = createRoot(container)
+    } finally {
+      URL.createObjectURL = originalCreateObjectUrl
+      URL.revokeObjectURL = originalRevokeObjectUrl
+    }
   })
 
   test('renders the fixed recipe with one accessible model option and no key or size input', async () => {
