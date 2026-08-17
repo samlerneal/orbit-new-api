@@ -7,6 +7,7 @@ import {
   clearImageHistory,
   deleteImageHistoryItem,
   IMAGE_HISTORY_DATABASE,
+  openImageHistoryDatabase,
   loadImageHistory,
   MAX_HISTORY_BYTES,
   MAX_HISTORY_IMAGES,
@@ -47,6 +48,33 @@ after(() => GlobalRegistrator.unregister())
 afterEach(async () => deleteHistoryDatabase())
 
 describe('image history storage', () => {
+  test('fails open when IndexedDB is blocked and closes a late connection', async () => {
+    const originalIndexedDb = globalThis.indexedDB
+    let closeCalls = 0
+    const lateDatabase = {
+      close: () => (closeCalls += 1),
+    } as unknown as IDBDatabase
+    const request = {} as IDBOpenDBRequest
+    Object.defineProperties(request, {
+      onblocked: { configurable: true, writable: true, value: null },
+      onerror: { configurable: true, writable: true, value: null },
+      onsuccess: { configurable: true, writable: true, value: null },
+      onupgradeneeded: { configurable: true, writable: true, value: null },
+      result: { configurable: true, value: lateDatabase },
+      error: { configurable: true, value: null },
+    })
+    globalThis.indexedDB = { open: () => request } as unknown as IDBFactory
+    try {
+      const opening = openImageHistoryDatabase(1_000)
+      ;(request.onblocked as (() => void) | null)?.()
+      await assert.rejects(() => opening, /unavailable/)
+      ;(request.onsuccess as (() => void) | null)?.()
+      assert.equal(closeCalls, 1)
+    } finally {
+      globalThis.indexedDB = originalIndexedDb
+    }
+  })
+
   test('keeps each owner isolated and uses owner metadata to fail closed', async () => {
     await saveImageHistoryItem(createItem('one', 1))
     await saveImageHistoryItem(createItem('two', 2, 8, 48))

@@ -162,6 +162,7 @@ export function ImageHistoryPanel(props: ImageHistoryPanelProps) {
                   className='aspect-square w-full object-cover'
                   src={props.historyUrls[item.id]}
                   alt={item.prompt}
+                  loading='lazy'
                 />
               </button>
               <p
@@ -366,7 +367,7 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
     >
       <div className='mx-auto max-w-7xl' data-image-studio-page>
         <div
-          className='grid min-w-0 gap-4 min-[917px]:grid-cols-[340px_minmax(0,1fr)] lg:grid-cols-[390px_minmax(0,1fr)] lg:gap-5'
+          className='grid min-w-0 gap-4 @[917px]/content:grid-cols-[340px_minmax(0,1fr)] @[1200px]/content:grid-cols-[390px_minmax(0,1fr)] @[1200px]/content:gap-5'
           data-image-studio-layout
         >
           <section

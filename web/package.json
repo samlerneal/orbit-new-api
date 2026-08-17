@@ -18,6 +18,7 @@
     "i18n:sync": "node scripts/sync-i18n.mjs",
     "check:public-content": "bun scripts/check-public-content.ts",
     "test:public-chat-single-space": "\"$npm_execpath\" scripts/test-public-chat-single-space.mjs",
+    "test:critical-node": "node scripts/test-critical-node.mjs",
     "knip": "knip"
   },
   "dependencies": {

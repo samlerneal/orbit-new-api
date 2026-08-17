@@ -11,11 +11,10 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import type { ImageGenerationRequest } from '../hooks/use-image-generation'
 import type { ImageHistoryItem } from '../lib/image-history'
-import {
-  ImageHistoryPanel,
-  ImageHistoryUrlScope,
-  ImageStudioWorkbench,
-} from './image-studio-workbench'
+
+let ImageHistoryPanel: typeof import('./image-studio-workbench').ImageHistoryPanel
+let ImageHistoryUrlScope: typeof import('./image-studio-workbench').ImageHistoryUrlScope
+let ImageStudioWorkbench: typeof import('./image-studio-workbench').ImageStudioWorkbench
 
 let container: HTMLDivElement
 let root: Root
@@ -100,6 +99,8 @@ before(async () => {
   ;(
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true
+  ;({ ImageHistoryPanel, ImageHistoryUrlScope, ImageStudioWorkbench } =
+    await import('./image-studio-workbench'))
   await i18n.changeLanguage('en')
 })
 
@@ -115,8 +116,10 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
-  flushSync(() => root.unmount())
-  useAuthStore.getState().auth.reset('idle')
+  await act(async () => {
+    root.unmount()
+    useAuthStore.getState().auth.reset('idle')
+  })
   container.remove()
 })
 
@@ -125,6 +128,45 @@ after(() => {
 })
 
 describe('image studio workbench', () => {
+  test('does not loop when the real history URL scope updates after history initialization', async () => {
+    const originalConsoleError = console.error
+    const consoleErrors: string[] = []
+    console.error = (...arguments_) => {
+      consoleErrors.push(arguments_.join(' '))
+    }
+    try {
+      await act(async () => {
+        useAuthStore.getState().auth.setBootstrapState('checking')
+        renderWorkbench()
+      })
+      assert.equal(
+        consoleErrors.some((message) =>
+          message.includes('Maximum update depth exceeded')
+        ),
+        false
+      )
+    } finally {
+      console.error = originalConsoleError
+    }
+  })
+
+  test('keeps generation available when local image history cannot open', async () => {
+    const originalIndexedDb = globalThis.indexedDB
+    globalThis.indexedDB = undefined as unknown as IDBFactory
+    try {
+      renderWorkbench()
+      await act(async () => {
+        await Promise.resolve()
+      })
+      assert.match(container.textContent ?? '', /not saved to history/)
+      flushSync(() => setTextareaValue('A local failure fixture'))
+      flushSync(() => generateButton().click())
+      assert.equal(requests.length, 1)
+    } finally {
+      globalThis.indexedDB = originalIndexedDb
+    }
+  })
+
   test('sends only prompt and replaces generation with a disabled stop action', async () => {
     renderWorkbench()
     flushSync(() => setTextareaValue('画一只猫'))

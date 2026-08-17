@@ -17,14 +17,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import { Sidebar, SidebarContent, SidebarRail } from '@/components/ui/sidebar'
-import { useLayout } from '@/context/layout-provider'
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import { Sidebar, SidebarContent, useSidebar } from '@/components/ui/sidebar'
 import { useSidebarView } from '@/hooks/use-sidebar-view'
 import { MOTION_TRANSITION, MOTION_VARIANTS } from '@/lib/motion'
 
 import { NavGroup } from './nav-group'
 import { SidebarViewHeader } from './sidebar-view-header'
+
+function shouldCloseNavigationSheet(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('a') !== null
+}
 
 /**
  * Application sidebar.
@@ -44,34 +55,81 @@ import { SidebarViewHeader } from './sidebar-view-header'
  * in the registry; this component requires no changes.
  */
 export function AppSidebar() {
-  const { collapsible, variant } = useLayout()
+  const { t } = useTranslation()
   const { key, view, navGroups } = useSidebarView()
+  const { isMobile, open, openMobile, setOpen, setOpenMobile, triggerRef } =
+    useSidebar()
   const shouldReduce = useReducedMotion()
+  const sidebarOpen = isMobile ? openMobile : open
+  const previousOpenRef = useRef(sidebarOpen)
+
+  useEffect(() => {
+    if (previousOpenRef.current && !sidebarOpen) triggerRef.current?.focus()
+    previousOpenRef.current = sidebarOpen
+  }, [sidebarOpen, triggerRef])
+
+  const closeSidebar = () => {
+    if (isMobile) {
+      setOpenMobile(false)
+      return
+    }
+    setOpen(false)
+  }
 
   return (
-    <Sidebar collapsible={collapsible} variant={variant}>
-      {view && <SidebarViewHeader view={view} />}
+    <Sheet
+      open={sidebarOpen}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          closeSidebar()
+          return
+        }
+        if (isMobile) {
+          setOpenMobile(true)
+          return
+        }
+        setOpen(true)
+      }}
+    >
+      <SheetContent
+        id='app-navigation-sheet'
+        side='left'
+        showCloseButton={false}
+        className='w-[252px] max-w-[calc(100vw-1rem)] p-0'
+        onClickCapture={(event) => {
+          if (shouldCloseNavigationSheet(event.target)) {
+            closeSidebar()
+          }
+        }}
+      >
+        <SheetHeader className='sr-only'>
+          <SheetTitle>{t('Navigation')}</SheetTitle>
+        </SheetHeader>
+        <Sidebar collapsible='none' className='h-full w-full'>
+          {view && <SidebarViewHeader view={view} />}
 
-      <SidebarContent className='py-2'>
-        <AnimatePresence mode='wait' initial={false}>
-          <motion.div
-            key={key}
-            initial={
-              shouldReduce ? false : MOTION_VARIANTS.sidebarSlide.initial
-            }
-            animate={MOTION_VARIANTS.sidebarSlide.animate}
-            exit={shouldReduce ? undefined : MOTION_VARIANTS.sidebarSlide.exit}
-            transition={MOTION_TRANSITION.fast}
-            className='flex flex-col'
-          >
-            {navGroups.map((props) => (
-              <NavGroup key={props.id || props.title} {...props} />
-            ))}
-          </motion.div>
-        </AnimatePresence>
-      </SidebarContent>
-
-      <SidebarRail />
-    </Sidebar>
+          <SidebarContent className='py-2'>
+            <AnimatePresence mode='wait' initial={false}>
+              <motion.div
+                key={key}
+                initial={
+                  shouldReduce ? false : MOTION_VARIANTS.sidebarSlide.initial
+                }
+                animate={MOTION_VARIANTS.sidebarSlide.animate}
+                exit={
+                  shouldReduce ? undefined : MOTION_VARIANTS.sidebarSlide.exit
+                }
+                transition={MOTION_TRANSITION.fast}
+                className='flex flex-col'
+              >
+                {navGroups.map((props) => (
+                  <NavGroup key={props.id || props.title} {...props} />
+                ))}
+              </motion.div>
+            </AnimatePresence>
+          </SidebarContent>
+        </Sidebar>
+      </SheetContent>
+    </Sheet>
   )
 }

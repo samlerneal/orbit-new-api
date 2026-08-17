@@ -5,6 +5,7 @@ const IMAGE_HISTORY_STORE = 'images'
 const IMAGE_HISTORY_OWNER_STORE = 'owners'
 export const MAX_HISTORY_IMAGES = 20
 export const MAX_HISTORY_BYTES = 100 * 1024 * 1024
+export const IMAGE_HISTORY_OPEN_TIMEOUT_MS = 3_000
 
 export type ImageHistoryItem = {
   blob: Blob
@@ -52,14 +53,31 @@ function isOwnerRecord(
   )
 }
 
-function openDatabase(): Promise<IDBDatabase> {
+export function openImageHistoryDatabase(
+  timeoutMs = IMAGE_HISTORY_OPEN_TIMEOUT_MS
+): Promise<IDBDatabase> {
   if (typeof indexedDB === 'undefined') {
     return Promise.reject(new Error('Image history is unavailable'))
   }
   return new Promise((resolve, reject) => {
+    let settled = false
+    const settle = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      globalThis.clearTimeout(timeout)
+      callback()
+    }
     const request = indexedDB.open(IMAGE_HISTORY_DATABASE, 1)
+    const timeout = globalThis.setTimeout(
+      () => settle(() => reject(new Error('Image history is unavailable'))),
+      timeoutMs
+    )
+    request.onblocked = () =>
+      settle(() => reject(new Error('Image history is unavailable')))
     request.onerror = () =>
-      reject(request.error ?? new Error('Image history is unavailable'))
+      settle(() =>
+        reject(request.error ?? new Error('Image history is unavailable'))
+      )
     request.onupgradeneeded = () => {
       const database = request.result
       if (!database.objectStoreNames.contains(IMAGE_HISTORY_STORE)) {
@@ -77,7 +95,13 @@ function openDatabase(): Promise<IDBDatabase> {
         })
       }
     }
-    request.onsuccess = () => resolve(request.result)
+    request.onsuccess = () => {
+      if (settled) {
+        request.result.close()
+        return
+      }
+      settle(() => resolve(request.result))
+    }
   })
 }
 
@@ -114,7 +138,7 @@ function retainedItems(items: ImageHistoryItem[]): ImageHistoryItem[] {
 async function withDatabase<T>(
   operation: (database: IDBDatabase) => Promise<T>
 ) {
-  const database = await openDatabase()
+  const database = await openImageHistoryDatabase()
   try {
     return await operation(database)
   } finally {

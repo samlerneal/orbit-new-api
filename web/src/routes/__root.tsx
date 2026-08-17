@@ -23,11 +23,14 @@ import {
   Outlet,
   redirect,
   useNavigate,
+  useRouter,
 } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { NavigationProgress } from '@/components/navigation-progress'
+import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
 import { ThemeCustomizationProvider } from '@/context/theme-customization-provider'
 import { saveAffiliateCode } from '@/features/auth/lib/storage'
@@ -43,6 +46,19 @@ import {
 import { subscribeAuthSessionEvents } from '@/lib/auth-session-sync'
 import { resolveLegacyRoute } from '@/lib/legacy-route'
 import { useAuthStore } from '@/stores/auth-store'
+
+export function shouldBlockRouteForAuthRecovery(
+  outcome: Awaited<ReturnType<typeof bootstrapAuthentication>>
+): boolean {
+  return outcome.kind === 'transient_error'
+}
+
+export class AuthBootstrapRecoveryError extends Error {
+  constructor() {
+    super('Authentication recovery is required')
+    this.name = 'AuthBootstrapRecoveryError'
+  }
+}
 
 function RootComponent() {
   const navigate = useNavigate()
@@ -107,6 +123,37 @@ function RootComponent() {
   )
 }
 
+function AuthBootstrapRecovery() {
+  const { t } = useTranslation()
+  const router = useRouter()
+
+  return (
+    <main
+      className='flex min-h-svh items-center justify-center p-6'
+      role='alert'
+    >
+      <div className='max-w-sm space-y-3 text-center'>
+        <p className='text-sm'>{t('Request failed')}</p>
+        <Button onClick={() => void router.invalidate()}>{t('Retry')}</Button>
+      </div>
+    </main>
+  )
+}
+
+function AuthBootstrapPending() {
+  const { t } = useTranslation()
+
+  return (
+    <main
+      className='flex min-h-svh items-center justify-center p-6'
+      aria-busy='true'
+      aria-live='polite'
+    >
+      <p className='text-muted-foreground text-sm'>{t('Loading')}</p>
+    </main>
+  )
+}
+
 // 缓存 setup 状态检查结果，避免每次导航都重复调用 API
 // 使用 localStorage 持久化，避免页面刷新后重复检查
 const SETUP_CHECKED_KEY = 'setup_status_checked'
@@ -156,7 +203,7 @@ export const Route = createRootRouteWithContext<{
 
     // 只检查 setup 状态（如果需要）
     if (needsSetupCheck) {
-      const [status] = await Promise.all([
+      const [status, outcome] = await Promise.all([
         getSetupStatus().catch((error) => {
           if (import.meta.env.DEV) {
             // eslint-disable-next-line no-console
@@ -172,11 +219,23 @@ export const Route = createRootRouteWithContext<{
       }
       setupStatusChecked = true
       setSetupStatusCache(true)
+      if (shouldBlockRouteForAuthRecovery(outcome)) {
+        throw new AuthBootstrapRecoveryError()
+      }
     } else {
-      await authBootstrap
+      const outcome = await authBootstrap
+      if (shouldBlockRouteForAuthRecovery(outcome)) {
+        throw new AuthBootstrapRecoveryError()
+      }
     }
   },
   component: RootComponent,
+  pendingComponent: AuthBootstrapPending,
   notFoundComponent: NotFoundError,
-  errorComponent: GeneralError,
+  errorComponent: ({ error }) =>
+    error instanceof AuthBootstrapRecoveryError ? (
+      <AuthBootstrapRecovery />
+    ) : (
+      <GeneralError error={error} />
+    ),
 })

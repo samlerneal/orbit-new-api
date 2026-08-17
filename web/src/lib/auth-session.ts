@@ -50,6 +50,7 @@ export interface AuthRefreshRuntime {
   markTransient: () => void
   wait: (delay: number) => Promise<void>
   isCurrent?: () => boolean
+  timeoutMs?: number
 }
 
 export interface AuthTokenRotation {
@@ -75,6 +76,8 @@ const authClient = axios.create({
 })
 
 const refreshRaceDelays = [80, 200, 500] as const
+export const AUTH_REFRESH_TIMEOUT_MS = 8_000
+export const AUTH_REFRESH_LOCK_TIMEOUT_MS = 8_000
 let refreshPromise: Promise<RefreshOutcome> | null = null
 let authEpoch = 0
 
@@ -206,6 +209,36 @@ function waitForRefreshRace(delay: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, delay))
 }
 
+export function runWithTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const timer = globalThis.setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(new Error('Authentication refresh timed out'))
+    }, timeoutMs)
+    void operation
+      .then(
+        (value) => {
+          if (settled) return
+          settled = true
+          globalThis.clearTimeout(timer)
+          resolve(value)
+        },
+        (error: unknown) => {
+          if (settled) return
+          settled = true
+          globalThis.clearTimeout(timer)
+          reject(error)
+        }
+      )
+      .catch(() => undefined)
+  })
+}
+
 export function createRefreshRunner(
   runtime: AuthRefreshRuntime
 ): () => Promise<RefreshOutcome> {
@@ -218,7 +251,17 @@ export function createRefreshRunner(
     allowMismatchRetry: boolean
   ): Promise<RefreshOutcome> => {
     if (runtime.isCurrent && !runtime.isCurrent()) return superseded()
-    const response = await runtime.request(runtime.getExpectedSID())
+    let response: AuthRefreshHTTPResponse
+    try {
+      response = await runWithTimeout(
+        runtime.request(runtime.getExpectedSID()),
+        runtime.timeoutMs ?? AUTH_REFRESH_TIMEOUT_MS
+      )
+    } catch (error: unknown) {
+      if (runtime.isCurrent && !runtime.isCurrent()) return superseded()
+      runtime.markTransient()
+      return { kind: 'transient_error', error }
+    }
     if (runtime.isCurrent && !runtime.isCurrent()) return superseded()
     const responseData = isRecord(response.data) ? response.data : undefined
     const code =
@@ -280,6 +323,7 @@ async function requestRefresh(
       undefined,
       {
         headers: expectedSID ? { 'X-Auth-Session': expectedSID } : undefined,
+        timeout: AUTH_REFRESH_TIMEOUT_MS,
       }
     )
     return { status: response.status, data: response.data }
@@ -319,12 +363,16 @@ async function performRefreshWithBrowserLock(
     if (typeof navigator === 'undefined' || !navigator.locks) {
       return runRefresh(refreshEpoch)
     }
-    return navigator.locks.request(
-      'new-api:auth-refresh',
-      { mode: 'exclusive' },
-      () => runRefresh(refreshEpoch)
+    return await runWithTimeout(
+      navigator.locks.request(
+        'new-api:auth-refresh',
+        { mode: 'exclusive' },
+        () => runRefresh(refreshEpoch)
+      ),
+      AUTH_REFRESH_LOCK_TIMEOUT_MS
     )
   } catch (error: unknown) {
+    if (authEpoch === refreshEpoch) authEpoch += 1
     useAuthStore.getState().auth.setBootstrapState('idle')
     return { kind: 'transient_error', error }
   }

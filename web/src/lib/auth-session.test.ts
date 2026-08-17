@@ -28,6 +28,8 @@ import {
   clearAuthenticatedClientState,
   createRefreshRunner,
   isAuthBundle,
+  runWithTimeout,
+  type AuthRefreshHTTPResponse,
   type AuthRefreshRuntime,
 } from './auth-session'
 
@@ -57,6 +59,39 @@ afterEach(() => {
 })
 
 describe('authentication session coordination', () => {
+  test('a refresh that never settles becomes retryable without accepting a later response', async () => {
+    let acceptCount = 0
+    let releaseRequest: ((value: AuthRefreshHTTPResponse) => void) | undefined
+    const pendingRequest = new Promise<AuthRefreshHTTPResponse>((resolve) => {
+      releaseRequest = resolve
+    })
+    const runtime: AuthRefreshRuntime = {
+      request: async () => pendingRequest,
+      getExpectedSID: () => bundle.session.sid,
+      parseBundle: (value) => (isAuthBundle(value) ? value : null),
+      acceptBundle: () => {
+        acceptCount += 1
+      },
+      clear: () => undefined,
+      markTransient: () => undefined,
+      wait: async () => undefined,
+      timeoutMs: 0,
+    }
+
+    const outcome = await createRefreshRunner(runtime)()
+    assert.equal(outcome.kind, 'transient_error')
+    releaseRequest?.({ status: 200, data: { success: true, data: bundle } })
+    await Promise.resolve()
+    assert.equal(acceptCount, 0)
+  })
+
+  test('runWithTimeout rejects an operation that does not settle before its deadline', async () => {
+    await assert.rejects(
+      () => runWithTimeout(new Promise(() => undefined), 0),
+      /timed out/
+    )
+  })
+
   test('bootstrap distinguishes a completed anonymous check from an active session', async () => {
     useAuthStore.getState().auth.reset('complete')
     assert.deepEqual(await bootstrapAuthentication(), { kind: 'anonymous' })

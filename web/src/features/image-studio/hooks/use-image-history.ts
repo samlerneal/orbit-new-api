@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -117,12 +117,17 @@ export function useImageHistory() {
     }
   }, [])
 
-  return {
-    addGeneratedImage,
-    history:
+  const visibleHistory = useMemo(
+    () =>
       authReady && ownerId !== null
         ? history.filter((item) => item.ownerId === ownerId)
         : [],
+    [authReady, history, ownerId]
+  )
+
+  return {
+    addGeneratedImage,
+    history: visibleHistory,
     removeAllHistory,
     removeHistoryItem,
     saveWarning,
