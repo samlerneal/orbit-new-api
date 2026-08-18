@@ -65,13 +65,11 @@ test('the real sidebar trigger opens a 252px overlay and restores focus after Es
   const reactActEnvironment = reactEnvironment.IS_REACT_ACT_ENVIRONMENT
   reactEnvironment.IS_REACT_ACT_ENVIRONMENT = true
   useAuthStore.getState().auth.setUser({ id: 1, username: 'tester', role: 10 })
-  const { AppSidebar } = await import(
-    '@/components/layout/components/app-sidebar'
-  )
+  const { AppSidebar } =
+    await import('@/components/layout/components/app-sidebar')
   const { Header } = await import('@/components/layout/components/header')
-  const { SidebarInset, SidebarProvider } = await import(
-    '@/components/ui/sidebar'
-  )
+  const { SidebarInset, SidebarProvider } =
+    await import('@/components/ui/sidebar')
 
   function NavigationLayout() {
     return (
