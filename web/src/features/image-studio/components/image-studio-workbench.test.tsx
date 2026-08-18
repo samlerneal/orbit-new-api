@@ -2,16 +2,17 @@ import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, describe, test } from 'node:test'
 
 import { GlobalRegistrator } from '@happy-dom/global-registrator'
-import { act, createElement } from 'react'
-import { flushSync } from 'react-dom'
-import { createRoot, type Root } from 'react-dom/client'
-
-import i18n from '@/i18n/config'
-import { useAuthStore } from '@/stores/auth-store'
+import type { Root } from 'react-dom/client'
 
 import type { ImageGenerationRequest } from '../hooks/use-image-generation'
 import type { ImageHistoryItem } from '../lib/image-history'
 
+let act: typeof import('react').act
+let createElement: typeof import('react').createElement
+let flushSync: typeof import('react-dom').flushSync
+let createRoot: typeof import('react-dom/client').createRoot
+let i18n: typeof import('@/i18n/config').default
+let useAuthStore: typeof import('@/stores/auth-store').useAuthStore
 let ImageHistoryPanel: typeof import('./image-studio-workbench').ImageHistoryPanel
 let ImageHistoryUrlScope: typeof import('./image-studio-workbench').ImageHistoryUrlScope
 let ImageStudioWorkbench: typeof import('./image-studio-workbench').ImageStudioWorkbench
@@ -19,6 +20,8 @@ let ImageStudioWorkbench: typeof import('./image-studio-workbench').ImageStudioW
 let container: HTMLDivElement
 let root: Root
 let requests: Array<{ prompt: string; signal: AbortSignal }> = []
+const nodeEnvironmentKey = ['NODE', 'ENV'].join('_')
+const originalNodeEnvironment = process.env[nodeEnvironmentKey]
 
 const pendingRequest: ImageGenerationRequest = (prompt, signal) => {
   requests.push({ prompt, signal })
@@ -96,9 +99,15 @@ function setTextareaValue(value: string) {
 
 before(async () => {
   GlobalRegistrator.register({ url: 'http://localhost/image-studio' })
+  process.env[nodeEnvironmentKey] = 'development'
   ;(
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true
+  ;({ act, createElement } = await import('react'))
+  ;({ flushSync } = await import('react-dom'))
+  ;({ createRoot } = await import('react-dom/client'))
+  ;({ default: i18n } = await import('@/i18n/config'))
+  ;({ useAuthStore } = await import('@/stores/auth-store'))
   ;({ ImageHistoryPanel, ImageHistoryUrlScope, ImageStudioWorkbench } =
     await import('./image-studio-workbench'))
   await i18n.changeLanguage('en')
@@ -125,6 +134,11 @@ afterEach(async () => {
 
 after(() => {
   GlobalRegistrator.unregister()
+  if (originalNodeEnvironment === undefined) {
+    delete process.env[nodeEnvironmentKey]
+  } else {
+    process.env[nodeEnvironmentKey] = originalNodeEnvironment
+  }
 })
 
 describe('image studio workbench', () => {
@@ -431,13 +445,57 @@ describe('image studio workbench', () => {
   })
 
   test('localizes the hierarchy, action, and billing notice', async () => {
-    await i18n.changeLanguage('zh')
+    await i18n.changeLanguage('zhCN')
     renderWorkbench()
     assert.match(container.textContent ?? '', /把想法变成图片/)
     assert.match(container.textContent ?? '', /1 张/)
     assert.match(container.textContent ?? '', /立即生成/)
     assert.match(container.textContent ?? '', /计费说明：当前 Beta/)
     await i18n.changeLanguage('en')
+  })
+
+  test('writes the currently localized prompt example into the input', async () => {
+    await act(async () => {
+      await i18n.changeLanguage('zhCN')
+      renderWorkbench()
+    })
+    const chineseExample = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === '阳光照亮的绿植阅读角'
+    )
+    assert.ok(chineseExample)
+    await act(async () => chineseExample.click())
+    assert.equal(
+      (container.querySelector('#image-prompt') as HTMLTextAreaElement).value,
+      '阳光照亮的绿植阅读角'
+    )
+
+    await act(async () => {
+      await i18n.changeLanguage('en')
+      renderWorkbench()
+    })
+    const englishExample = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'A sunlit reading corner with plants'
+    )
+    assert.ok(englishExample)
+    await act(async () => englishExample.click())
+    assert.equal(
+      (container.querySelector('#image-prompt') as HTMLTextAreaElement).value,
+      'A sunlit reading corner with plants'
+    )
+  })
+
+  test('owns its named container and queries only that container for the grid', () => {
+    renderWorkbench()
+    const page = container.querySelector('[data-image-studio-page]')
+    const layout = container.querySelector('[data-image-studio-layout]')
+    assert.ok(page)
+    assert.ok(layout)
+    assert.match(page.className, /@container\/image-studio/)
+    assert.match(
+      layout.className,
+      /@\[768px\]\/image-studio:grid-cols-\[340px_minmax\(0,1fr\)\]/
+    )
+    assert.doesNotMatch(layout.className, /\/content:/)
   })
 
   test('keeps a single prompt control, data-driven settings, and a separate result stage', async () => {

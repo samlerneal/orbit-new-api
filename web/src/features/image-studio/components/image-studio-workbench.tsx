@@ -365,9 +365,12 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
           : 'min-h-[calc(100vh-4rem)] overflow-x-hidden bg-[radial-gradient(circle_at_76%_8%,hsl(var(--primary)/.22),transparent_28rem),radial-gradient(circle_at_15%_87%,hsl(var(--primary)/.1),transparent_24rem),linear-gradient(hsl(var(--border)/.25)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.25)_1px,transparent_1px)] bg-[size:auto,auto,32px_32px,32px_32px] px-3 pt-14 pb-8 sm:px-5 md:px-6 md:pt-16'
       }
     >
-      <div className='mx-auto max-w-7xl' data-image-studio-page>
+      <div
+        className='@container/image-studio mx-auto max-w-7xl'
+        data-image-studio-page
+      >
         <div
-          className='grid min-w-0 gap-4 @[917px]/content:grid-cols-[340px_minmax(0,1fr)] @[1200px]/content:grid-cols-[390px_minmax(0,1fr)] @[1200px]/content:gap-5'
+          className='grid min-w-0 gap-4 @[768px]/image-studio:grid-cols-[340px_minmax(0,1fr)] @[768px]/image-studio:gap-5'
           data-image-studio-layout
         >
           <section
@@ -445,7 +448,7 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
                 <button
                   type='button'
                   key={example}
-                  onClick={() => setPrompt(example)}
+                  onClick={() => setPrompt(t(example))}
                   className='hover:border-primary/60 hover:bg-primary/5 focus:ring-primary/30 border-border/80 min-h-11 truncate rounded-lg border px-2.5 text-left text-xs leading-5 transition focus:ring-4 focus:outline-none'
                   title={t(example)}
                   aria-label={t(example)}
