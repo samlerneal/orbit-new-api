@@ -19,13 +19,22 @@ let ImageStudioWorkbench: typeof import('./image-studio-workbench').ImageStudioW
 
 let container: HTMLDivElement
 let root: Root
-let requests: Array<{ prompt: string; signal: AbortSignal }> = []
+let requests: Array<{ aspect: string; prompt: string; signal: AbortSignal }> =
+  []
 const nodeEnvironmentKey = ['NODE', 'ENV'].join('_')
 const originalNodeEnvironment = process.env[nodeEnvironmentKey]
 
-const pendingRequest: ImageGenerationRequest = (prompt, signal) => {
-  requests.push({ prompt, signal })
+const pendingRequest: ImageGenerationRequest = (prompt, aspect, signal) => {
+  requests.push({ prompt, aspect, signal })
   return new Promise(() => undefined)
+}
+
+function aspectButton(label: string) {
+  const button = [...container.querySelectorAll('button')].find(
+    (candidate) => candidate.textContent === label
+  )
+  assert.ok(button)
+  return button as HTMLButtonElement
 }
 
 function deferred<T>() {
@@ -44,14 +53,17 @@ function renderWorkbench(requestImage = pendingRequest) {
 
 function createHistoryItem(id: string): ImageHistoryItem {
   return {
+    aspect: 'square',
     blob: new Blob([new Uint8Array([1])], { type: 'image/png' }),
     createdAt: 1,
     generationId: `generation-${id}`,
+    height: 1024,
     id,
     model: 'gpt-image-2',
     ownerId: 47,
     prompt: `Saved prompt ${id}`,
     size: '1024×1024 PNG',
+    width: 1024,
   }
 }
 
@@ -81,6 +93,23 @@ function generateButton() {
   )
   assert.ok(button)
   return button as HTMLButtonElement
+}
+
+function assertFixedQuantity(label: string) {
+  const quantityLabel = [...container.querySelectorAll('p')].find(
+    (element) => element.textContent === label
+  )
+  assert.ok(quantityLabel)
+  const quantityControls = quantityLabel.nextElementSibling?.children
+  assert.ok(quantityControls)
+  assert.equal(quantityControls[0]?.textContent, '1')
+  const unavailableQuantityButtons =
+    quantityLabel.nextElementSibling?.querySelectorAll('button')
+  assert.equal(unavailableQuantityButtons?.length, 2)
+  assert.equal(unavailableQuantityButtons?.[0]?.textContent, '2')
+  assert.equal(unavailableQuantityButtons?.[1]?.textContent, '4')
+  assert.equal(unavailableQuantityButtons?.[0]?.getAttribute('disabled'), '')
+  assert.equal(unavailableQuantityButtons?.[1]?.getAttribute('disabled'), '')
 }
 
 function setTextareaValue(value: string) {
@@ -186,8 +215,8 @@ describe('image studio workbench', () => {
     flushSync(() => setTextareaValue('画一只猫'))
     flushSync(() => generateButton().click())
     assert.deepEqual(
-      requests.map(({ prompt }) => prompt),
-      ['画一只猫']
+      requests.map(({ prompt, aspect }) => ({ prompt, aspect })),
+      [{ prompt: '画一只猫', aspect: 'square' }]
     )
 
     assert.equal(
@@ -201,6 +230,39 @@ describe('image studio workbench', () => {
       false
     )
     assert.equal(requests.length, 1)
+  })
+
+  test('snapshots the selected aspect for a pending request and its successful result', async () => {
+    const response = deferred<{ data: Array<{ b64_json: string }> }>()
+    renderWorkbench((prompt, aspect, signal) => {
+      requests.push({ prompt, aspect, signal })
+      return response.promise
+    })
+    flushSync(() => aspectButton('Landscape').click())
+    flushSync(() => setTextareaValue('A wide local fixture'))
+    flushSync(() => generateButton().click())
+    flushSync(() => aspectButton('Portrait').click())
+    assert.deepEqual(
+      requests.map(({ aspect }) => aspect),
+      ['landscape']
+    )
+    assert.match(
+      container.querySelector('[data-image-studio-stage]')?.textContent ?? '',
+      /1536×1024/
+    )
+
+    response.resolve({ data: [{ b64_json: 'iVBORw0KGgo=' }] })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const stage = container.querySelector('[data-image-studio-stage]')
+    assert.ok(stage)
+    assert.match(stage.textContent ?? '', /1536×1024/)
+    assert.match(stage.querySelector('img')?.className ?? '', /object-contain/)
+    assert.match(
+      stage.querySelector('img')?.parentElement?.className ?? '',
+      /aspect-\[3\/2\]/
+    )
   })
 
   test('enforces the 4,000 Unicode code point boundary', async () => {
@@ -290,8 +352,8 @@ describe('image studio workbench', () => {
         const response = deferred<{
           data: Array<{ b64_json: string }>
         }>()
-        renderWorkbench((prompt, signal) => {
-          requests.push({ prompt, signal })
+        renderWorkbench((prompt, aspect, signal) => {
+          requests.push({ prompt, aspect, signal })
           return response.promise
         })
         flushSync(() => setTextareaValue('A deferred local fixture'))
@@ -426,7 +488,7 @@ describe('image studio workbench', () => {
   test('renders the fixed recipe with one accessible model option and no key or size input', async () => {
     renderWorkbench()
     assert.match(container.textContent ?? '', /Turn ideas into images/)
-    assert.match(container.textContent ?? '', /1 image/)
+    assertFixedQuantity('Quantity')
     assert.match(container.textContent ?? '', /Text to image/)
     assert.match(container.textContent ?? '', /Image to image/)
     assert.match(container.textContent ?? '', /Billing notice:/)
@@ -448,7 +510,7 @@ describe('image studio workbench', () => {
     await i18n.changeLanguage('zhCN')
     renderWorkbench()
     assert.match(container.textContent ?? '', /把想法变成图片/)
-    assert.match(container.textContent ?? '', /1 张/)
+    assertFixedQuantity('数量')
     assert.match(container.textContent ?? '', /立即生成/)
     assert.match(container.textContent ?? '', /计费说明：当前 Beta/)
     await i18n.changeLanguage('en')
@@ -514,15 +576,15 @@ describe('image studio workbench', () => {
     )
     assert.ok(settings)
     const disabledControls = settings.querySelectorAll('button[disabled]')
-    assert.equal(disabledControls.length, 8)
+    assert.equal(disabledControls.length, 6)
     const firstDisabledControl = disabledControls[0]
     if (!(firstDisabledControl instanceof HTMLButtonElement)) {
       throw new Error('Expected the first disabled control to be a button.')
     }
     firstDisabledControl.click()
     assert.equal(requests.length, 0)
-    assert.equal(container.querySelectorAll('button[disabled]').length, 9)
-    assert.equal(container.querySelectorAll('[role="tooltip"]').length, 9)
+    assert.equal(container.querySelectorAll('button[disabled]').length, 8)
+    assert.equal(container.querySelectorAll('[role="tooltip"]').length, 7)
     assert.match(stage.textContent ?? '', /AI image studio/)
     assert.match(stage.textContent ?? '', /Generation result/)
     assert.match(stage.textContent ?? '', /Ready/)

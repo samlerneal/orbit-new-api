@@ -37,15 +37,13 @@ type imageStudioRequest struct {
 	Prompt string `json:"prompt"`
 }
 
+var imageStudioAspectSizes = map[string]string{
+	"square":    "1024x1024",
+	"landscape": "1536x1024",
+	"portrait":  "1024x1536",
+}
+
 func normalizeImageStudioRequest(c *gin.Context) error {
-	var request imageStudioRequest
-	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
-		return errors.New("invalid image studio request")
-	}
-	prompt := strings.TrimSpace(request.Prompt)
-	if prompt == "" || utf8.RuneCountInString(prompt) > imageStudioPromptLimit {
-		return errors.New("invalid image studio prompt")
-	}
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		return errors.New("invalid image studio request")
@@ -55,17 +53,39 @@ func normalizeImageStudioRequest(c *gin.Context) error {
 		return errors.New("invalid image studio request")
 	}
 	var raw map[string]any
-	if err := common.Unmarshal(body, &raw); err != nil || len(raw) != 1 {
+	if err := common.Unmarshal(body, &raw); err != nil || len(raw) < 1 || len(raw) > 2 {
 		return errors.New("invalid image studio request")
 	}
 	if _, ok := raw["prompt"]; !ok {
 		return errors.New("invalid image studio request")
 	}
+	for field := range raw {
+		if field != "prompt" && field != "aspect" {
+			return errors.New("invalid image studio request")
+		}
+	}
+	size := imageStudioAspectSizes["square"]
+	if rawAspect, ok := raw["aspect"]; ok {
+		aspect, isString := rawAspect.(string)
+		var isAllowed bool
+		size, isAllowed = imageStudioAspectSizes[aspect]
+		if !isString || !isAllowed {
+			return errors.New("invalid image studio request")
+		}
+	}
+	var request imageStudioRequest
+	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
+		return errors.New("invalid image studio request")
+	}
+	prompt := strings.TrimSpace(request.Prompt)
+	if prompt == "" || utf8.RuneCountInString(prompt) > imageStudioPromptLimit {
+		return errors.New("invalid image studio prompt")
+	}
 	fixedBody, err := common.Marshal(dto.ImageRequest{
 		Model:          "gpt-image-2",
 		Prompt:         prompt,
 		N:              common.GetPointer(uint(1)),
-		Size:           "1024x1024",
+		Size:           size,
 		Quality:        "low",
 		ResponseFormat: "b64_json",
 		OutputFormat:   []byte(`"png"`),

@@ -23,18 +23,21 @@ describe('image generation request lifecycle', () => {
   test('sends one request through repeated generate calls', async () => {
     const pending = deferred<ImageGenerationResponse>()
     let requests = 0
+    const aspects: string[] = []
     const states: ImageGenerationState[] = []
     const lifecycle = createImageGenerationLifecycle(
-      () => {
+      (_prompt, aspect) => {
         requests += 1
+        aspects.push(aspect)
         return pending.promise
       },
       (state) => states.push(state)
     )
 
-    void lifecycle.generate('first')
-    void lifecycle.generate('second')
+    void lifecycle.generate('first', 'landscape')
+    void lifecycle.generate('second', 'portrait')
     assert.equal(requests, 1)
+    assert.deepEqual(aspects, ['landscape'])
     assert.equal(lifecycle.getState().status, 'generating')
 
     pending.reject(new Error('fake failure'))
@@ -53,7 +56,7 @@ describe('image generation request lifecycle', () => {
     let requests = 0
     mock.method(URL, 'createObjectURL', () => 'blob:generated')
     const lifecycle = createImageGenerationLifecycle(
-      (_prompt, signal) => {
+      (_prompt, _aspect, signal) => {
         const response = responses[requests++]
         assert.ok(response)
         if ('promise' in response) return response.promise
@@ -63,12 +66,12 @@ describe('image generation request lifecycle', () => {
       () => undefined
     )
 
-    await lifecycle.generate('success')
+    await lifecycle.generate('success', 'square')
     assert.equal(lifecycle.getState().status, 'success')
     assert.equal(lifecycle.getState().imageUrl, 'blob:generated')
-    await lifecycle.generate('failure')
+    await lifecycle.generate('failure', 'square')
     assert.equal(lifecycle.getState().status, 'error')
-    void lifecycle.generate('stop')
+    void lifecycle.generate('stop', 'square')
     lifecycle.stopWaiting()
     assert.equal(lifecycle.getState().status, 'error')
     assert.equal(requests, 3)
@@ -93,7 +96,7 @@ describe('image generation request lifecycle', () => {
       }
     )
 
-    await lifecycle.generate('A local fixture')
+    await lifecycle.generate('A local fixture', 'portrait')
 
     assert.deepEqual(successfulImages, [
       { generationId: 'fixed-generation-id', prompt: 'A local fixture' },
@@ -112,8 +115,8 @@ describe('image generation request lifecycle', () => {
       () => undefined
     )
 
-    await lifecycle.generate('first')
-    await lifecycle.generate('replacement')
+    await lifecycle.generate('first', 'square')
+    await lifecycle.generate('replacement', 'landscape')
     assert.deepEqual(revoked, ['blob:1'])
     lifecycle.dispose()
     assert.deepEqual(revoked, ['blob:1', 'blob:2'])
@@ -128,7 +131,7 @@ describe('image generation request lifecycle', () => {
       () => undefined
     )
 
-    await lifecycle.generate('local fixture')
+    await lifecycle.generate('local fixture', 'square')
     lifecycle.invalidateCurrentImage()
     lifecycle.invalidateCurrentImage()
 

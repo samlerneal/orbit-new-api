@@ -24,14 +24,17 @@ function createItem(
   itemOwnerId = ownerId
 ): ImageHistoryItem {
   return {
+    aspect: 'square',
     blob: new Blob([new Uint8Array(byteLength)], { type: 'image/png' }),
     createdAt,
     generationId: `generation-${id}`,
+    height: 1024,
     id,
     model: 'gpt-image-2',
     ownerId: itemOwnerId,
     prompt: `Prompt ${id}`,
     size: '1024×1024 PNG',
+    width: 1024,
   }
 }
 
@@ -99,6 +102,46 @@ describe('image history storage', () => {
       (await loadImageHistory(ownerId)).map((item) => item.id),
       ['one']
     )
+  })
+
+  test('retains the aspect and dimensions of newly saved records', async () => {
+    await saveImageHistoryItem({
+      ...createItem('portrait', 1),
+      aspect: 'portrait',
+      height: 1536,
+      size: '1024×1536 PNG',
+    })
+
+    const [loaded] = await loadImageHistory(ownerId)
+    assert.equal(loaded?.aspect, 'portrait')
+    assert.equal(loaded?.width, 1024)
+    assert.equal(loaded?.height, 1536)
+    assert.equal(loaded?.size, '1024×1536 PNG')
+  })
+
+  test('reads legacy records as square images without modifying the stored record', async () => {
+    const legacy = createItem('legacy', 1)
+    const {
+      aspect: _aspect,
+      height: _height,
+      width: _width,
+      ...storedLegacy
+    } = legacy
+    const database = await openImageHistoryDatabase()
+    const transaction = database.transaction(['images', 'owners'], 'readwrite')
+    transaction.objectStore('images').put(storedLegacy)
+    transaction.objectStore('owners').put({ ownerId })
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+    database.close()
+
+    const [loaded] = await loadImageHistory(ownerId)
+    assert.equal(loaded?.aspect, 'square')
+    assert.equal(loaded?.size, '1024×1024 PNG')
+    assert.equal(loaded?.width, 1024)
+    assert.equal(loaded?.height, 1024)
   })
 
   test('retains exactly twenty items then evicts the oldest', async () => {

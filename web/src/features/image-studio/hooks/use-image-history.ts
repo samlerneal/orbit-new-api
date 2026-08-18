@@ -12,7 +12,6 @@ import {
 import type { GeneratedImage } from '../types'
 
 const FIXED_MODEL = 'gpt-image-2'
-const FIXED_SIZE = '1024×1024 PNG'
 
 function createHistoryId(generationId: string): string {
   return `image-${generationId}`
@@ -70,13 +69,16 @@ export function useImageHistory() {
       }
       const item: ImageHistoryItem = {
         blob: generatedImage.blob,
+        aspect: generatedImage.aspect,
         createdAt: Date.now(),
         generationId: generatedImage.generationId,
+        height: generatedImage.height,
         id: createHistoryId(generatedImage.generationId),
         model: FIXED_MODEL,
         ownerId: currentOwnerId,
         prompt,
-        size: FIXED_SIZE,
+        size: generatedImage.size,
+        width: generatedImage.width,
       }
       try {
         await saveImageHistoryItem(item)

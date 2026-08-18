@@ -1,3 +1,4 @@
+import { imageAspectMetadata, type ImageAspect } from '../types'
 import { maxImageBytes } from './image-generation'
 
 export const IMAGE_HISTORY_DATABASE = 'orbit-image-history'
@@ -8,23 +9,36 @@ export const MAX_HISTORY_BYTES = 100 * 1024 * 1024
 export const IMAGE_HISTORY_OPEN_TIMEOUT_MS = 3_000
 
 export type ImageHistoryItem = {
+  aspect: ImageAspect
   blob: Blob
   createdAt: number
   generationId: string
+  height: number
   id: string
   model: string
   ownerId: number
   prompt: string
   size: string
+  width: number
+}
+
+type StoredImageHistoryItem = Omit<
+  ImageHistoryItem,
+  'aspect' | 'height' | 'size' | 'width'
+> & {
+  aspect?: unknown
+  height?: unknown
+  size: string
+  width?: unknown
 }
 
 type ImageHistoryOwner = {
   ownerId: number
 }
 
-function isValidImage(item: unknown): item is ImageHistoryItem {
+function isValidImage(item: unknown): item is StoredImageHistoryItem {
   if (!item || typeof item !== 'object') return false
-  const candidate = item as Partial<ImageHistoryItem>
+  const candidate = item as Partial<StoredImageHistoryItem>
   return (
     typeof candidate.id === 'string' &&
     typeof candidate.generationId === 'string' &&
@@ -40,6 +54,32 @@ function isValidImage(item: unknown): item is ImageHistoryItem {
     candidate.blob.size <= maxImageBytes &&
     candidate.blob.type === 'image/png'
   )
+}
+
+function normalizeImageHistoryItem(
+  item: StoredImageHistoryItem
+): ImageHistoryItem {
+  const aspect =
+    item.aspect === 'landscape' || item.aspect === 'portrait'
+      ? item.aspect
+      : 'square'
+  const metadata = imageAspectMetadata[aspect]
+  return {
+    ...item,
+    aspect,
+    height:
+      typeof item.height === 'number' && item.height === metadata.height
+        ? item.height
+        : metadata.height,
+    size:
+      typeof item.size === 'string' && item.size === metadata.size
+        ? item.size
+        : metadata.size,
+    width:
+      typeof item.width === 'number' && item.width === metadata.width
+        ? item.width
+        : metadata.width,
+  }
 }
 
 function isOwnerRecord(
@@ -178,7 +218,7 @@ export async function loadImageHistory(
     const validItems: ImageHistoryItem[] = []
     for (const item of storedItems) {
       if (isValidImage(item) && item.ownerId === ownerId) {
-        validItems.push(item)
+        validItems.push(normalizeImageHistoryItem(item))
       } else if (
         item &&
         typeof item === 'object' &&
@@ -195,7 +235,15 @@ export async function loadImageHistory(
 export async function saveImageHistoryItem(
   item: ImageHistoryItem
 ): Promise<void> {
-  if (!isValidImage(item)) throw new Error('Invalid image history item')
+  const metadata = imageAspectMetadata[item.aspect]
+  if (
+    !isValidImage(item) ||
+    item.width !== metadata.width ||
+    item.height !== metadata.height ||
+    item.size !== metadata.size
+  ) {
+    throw new Error('Invalid image history item')
+  }
   await withDatabase(async (database) => {
     const transaction = database.transaction(
       [IMAGE_HISTORY_STORE, IMAGE_HISTORY_OWNER_STORE],
@@ -214,14 +262,17 @@ export async function saveImageHistoryItem(
         )
     )
     const validExisting = existing.filter(
-      (candidate): candidate is ImageHistoryItem =>
+      (candidate): candidate is StoredImageHistoryItem =>
         isValidImage(candidate) && candidate.ownerId === item.ownerId
     )
     const duplicate = validExisting.some(
       (candidate) => candidate.generationId === item.generationId
     )
     if (!duplicate) {
-      const retained = retainedItems([item, ...validExisting])
+      const retained = retainedItems([
+        item,
+        ...validExisting.map(normalizeImageHistoryItem),
+      ])
       const retainedIds = new Set(retained.map((candidate) => candidate.id))
       for (const candidate of existing) {
         if (

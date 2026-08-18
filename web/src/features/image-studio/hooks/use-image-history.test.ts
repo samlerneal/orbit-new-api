@@ -67,9 +67,13 @@ describe('use image history', () => {
     await act(async () => {
       await latestHistory.addGeneratedImage(
         {
+          aspect: 'square',
           blob: new Blob([new Uint8Array([1])], { type: 'image/png' }),
           generationId: 'first',
+          height: 1024,
           imageUrl: 'blob:first',
+          size: '1024×1024 PNG',
+          width: 1024,
         },
         'First prompt'
       )
@@ -99,9 +103,13 @@ describe('use image history', () => {
       value: undefined,
     })
     const generatedImage: GeneratedImage = {
+      aspect: 'square',
       blob: new Blob([new Uint8Array([1])], { type: 'image/png' }),
       generationId: 'not-saved',
+      height: 1024,
       imageUrl: 'blob:not-saved',
+      size: '1024×1024 PNG',
+      width: 1024,
     }
 
     await act(async () => {

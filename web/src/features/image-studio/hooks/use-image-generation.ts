@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { createImageBlob, revokeImageObjectUrl } from '../lib/image-generation'
-import type {
-  GeneratedImage,
-  ImageGenerationResponse,
-  ImageGenerationState,
+import {
+  imageAspectMetadata,
+  type GeneratedImage,
+  type ImageAspect,
+  type ImageGenerationResponse,
+  type ImageGenerationState,
 } from '../types'
 
 const initialState: ImageGenerationState = {
@@ -15,6 +17,7 @@ const initialState: ImageGenerationState = {
 
 export type ImageGenerationRequest = (
   prompt: string,
+  aspect: ImageAspect,
   signal: AbortSignal
 ) => Promise<ImageGenerationResponse>
 
@@ -44,21 +47,29 @@ export function createImageGenerationLifecycle(
     imageUrl = null
   }
 
-  const generate = async (prompt: string) => {
+  const generate = async (prompt: string, aspect: ImageAspect) => {
     if (controller) return
     clearImage()
     const activeController = new AbortController()
     controller = activeController
-    publishState({ status: 'generating', imageUrl: null, error: null })
+    publishState({ status: 'generating', aspect, imageUrl: null, error: null })
     try {
-      const response = await currentRequest(prompt, activeController.signal)
+      const response = await currentRequest(
+        prompt,
+        aspect,
+        activeController.signal
+      )
       if (controller !== activeController) return
       const blob = createImageBlob(response.data?.[0]?.b64_json || '')
       imageUrl = URL.createObjectURL(blob)
       const generatedImage = {
+        aspect,
         blob,
         generationId: crypto.randomUUID(),
+        height: imageAspectMetadata[aspect].height,
         imageUrl,
+        size: imageAspectMetadata[aspect].size,
+        width: imageAspectMetadata[aspect].width,
       }
       publishState({ status: 'success', imageUrl, error: null, generatedImage })
       currentSuccessHandler?.(generatedImage, prompt)

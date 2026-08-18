@@ -31,6 +31,48 @@ func TestNormalizeImageStudioRequestReplacesClientSpecification(t *testing.T) {
 	require.Equal(t, "gpt-image-2", rewritten.Model)
 }
 
+func TestNormalizeImageStudioRequestMapsAllowedAspectsToFixedSizes(t *testing.T) {
+	testCases := []struct {
+		name         string
+		body         string
+		expectedSize string
+	}{
+		{name: "missing defaults to square", body: `{"prompt":"safe"}`, expectedSize: "1024x1024"},
+		{name: "square", body: `{"prompt":"safe","aspect":"square"}`, expectedSize: "1024x1024"},
+		{name: "landscape", body: `{"prompt":"safe","aspect":"landscape"}`, expectedSize: "1536x1024"},
+		{name: "portrait", body: `{"prompt":"safe","aspect":"portrait"}`, expectedSize: "1024x1536"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/pg/images/generations", strings.NewReader(testCase.body))
+			c.Request.Header.Set("Content-Type", gin.MIMEJSON)
+
+			require.NoError(t, normalizeImageStudioRequest(c))
+			storage, err := common.GetBodyStorage(c)
+			require.NoError(t, err)
+			body, err := storage.Bytes()
+			require.NoError(t, err)
+			require.JSONEq(t, fmt.Sprintf(`{"model":"gpt-image-2","prompt":"safe","n":1,"size":"%s","quality":"low","response_format":"b64_json","background":"opaque","output_format":"png","stream":false}`, testCase.expectedSize), string(body))
+		})
+	}
+}
+
+func TestNormalizeImageStudioRequestRejectsInvalidAspectValues(t *testing.T) {
+	for _, body := range []string{
+		`{"prompt":"safe","aspect":""}`,
+		`{"prompt":"safe","aspect":null}`,
+		`{"prompt":"safe","aspect":1}`,
+		`{"prompt":"safe","aspect":"Square"}`,
+		`{"prompt":"safe","aspect":"wide"}`,
+	} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("POST", "/pg/images/generations", strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", gin.MIMEJSON)
+		require.Error(t, normalizeImageStudioRequest(c), body)
+	}
+}
+
 func TestNormalizeImageStudioRequestRejectsUnknownFields(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/pg/images/generations", strings.NewReader(`{"prompt":"safe","model":"other"}`))

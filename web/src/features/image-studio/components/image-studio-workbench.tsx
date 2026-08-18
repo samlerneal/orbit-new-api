@@ -10,6 +10,7 @@ import {
 } from '../hooks/use-image-generation'
 import { useImageHistory } from '../hooks/use-image-history'
 import type { ImageHistoryItem } from '../lib/image-history'
+import { imageAspectMetadata, type ImageAspect } from '../types'
 
 const examples = [
   'A sunlit reading corner with plants',
@@ -20,18 +21,24 @@ const examples = [
 
 const configurationSections = [
   {
-    id: 'aspect',
-    label: 'Aspect ratio',
-    options: ['1:1', 'Landscape', 'Portrait', 'Custom'],
-    selected: '1:1',
-  },
-  {
     id: 'resolution',
     label: 'Resolution',
     options: ['1K', '2K', '4K'],
     selected: '1K',
   },
 ]
+
+const aspectOptions: Array<{ aspect: ImageAspect; label: string }> = [
+  { aspect: 'square', label: '1:1' },
+  { aspect: 'landscape', label: 'Landscape' },
+  { aspect: 'portrait', label: 'Portrait' },
+]
+
+function aspectFrameClass(aspect: ImageAspect): string {
+  if (aspect === 'landscape') return 'aspect-[3/2]'
+  if (aspect === 'portrait') return 'aspect-[2/3]'
+  return 'aspect-square'
+}
 
 interface ImageStudioWorkbenchProps {
   embedded?: boolean
@@ -159,7 +166,7 @@ export function ImageHistoryPanel(props: ImageHistoryPanelProps) {
                 aria-label={`${t('View saved image')}: ${item.prompt.slice(0, 40)}`}
               >
                 <img
-                  className='aspect-square w-full object-cover'
+                  className={`${aspectFrameClass(item.aspect)} w-full object-contain`}
                   src={props.historyUrls[item.id]}
                   alt={item.prompt}
                   loading='lazy'
@@ -192,6 +199,7 @@ export function ImageHistoryPanel(props: ImageHistoryPanelProps) {
 export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
   const { t } = useTranslation()
   const [prompt, setPrompt] = useState('')
+  const [aspect, setAspect] = useState<ImageAspect>('square')
   const authOwnerId = useAuthStore((state) => state.auth.user?.id ?? null)
   const authReady = useAuthStore(
     (state) => state.auth.bootstrapState === 'complete'
@@ -275,6 +283,13 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
       ? state.imageUrl
       : null
   const displayedImageUrl = selectedHistoryUrl ?? currentImageUrl
+  let displayedMetadata = imageAspectMetadata[aspect]
+  if (state.status === 'generating') {
+    displayedMetadata = imageAspectMetadata[state.aspect]
+  } else if (state.status === 'success') {
+    displayedMetadata = state.generatedImage
+  }
+  if (selectedHistoryItem) displayedMetadata = selectedHistoryItem
   const isGenerating = state.status === 'generating'
   const promptLength = [...prompt.trim()].length
   const isPromptValid = promptLength > 0 && promptLength <= 4000
@@ -327,9 +342,11 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
     stageTitle = t('Generated image')
     stageContent = (
       <div className='relative z-10 flex w-full max-w-[min(100%,38rem)] flex-col gap-4'>
-        <div className='aspect-square w-full overflow-hidden rounded-xl border'>
+        <div
+          className={`${aspectFrameClass(displayedMetadata.aspect)} w-full overflow-hidden rounded-xl border`}
+        >
           <img
-            className='size-full object-cover shadow-2xl'
+            className='size-full object-contain shadow-2xl'
             src={displayedImageUrl}
             alt={t('Generated image')}
           />
@@ -498,18 +515,36 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
                   </div>
                 </section>
               </div>
+              <section>
+                <p className='text-muted-foreground mb-1 text-xs font-medium tracking-[0.12em] uppercase'>
+                  {t('Aspect ratio')}
+                </p>
+                <div className='grid grid-cols-4 gap-1.5'>
+                  {aspectOptions.map((option) => (
+                    <button
+                      className={`min-h-8 rounded-md border px-2 text-xs font-medium ${aspect === option.aspect ? 'border-primary/50 bg-primary/10 text-foreground' : 'border-border/70 text-muted-foreground hover:border-primary/60'}`}
+                      type='button'
+                      key={option.aspect}
+                      onClick={() => setAspect(option.aspect)}
+                      aria-pressed={aspect === option.aspect}
+                    >
+                      {t(option.label)}
+                    </button>
+                  ))}
+                  <DisabledOption
+                    id='aspect-Custom'
+                    label={t('Custom')}
+                    tooltip={disabledTooltip}
+                    fullWidth
+                  />
+                </div>
+              </section>
               {configurationSections.map((section) => (
                 <section key={section.label}>
                   <p className='text-muted-foreground mb-1 text-xs font-medium tracking-[0.12em] uppercase'>
                     {t(section.label)}
                   </p>
-                  <div
-                    className={
-                      section.id === 'aspect'
-                        ? 'grid grid-cols-4 gap-1.5'
-                        : 'flex gap-1.5'
-                    }
-                  >
+                  <div className='flex gap-1.5'>
                     {section.options.map((option) =>
                       option === section.selected ? (
                         <span
@@ -524,7 +559,6 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
                           id={`${section.id}-${option}`}
                           label={t(option)}
                           tooltip={disabledTooltip}
-                          fullWidth={section.id === 'aspect'}
                         />
                       )
                     )}
@@ -574,7 +608,7 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
                 onClick={() => {
                   generationOwnerRef.current = authReady ? authOwnerId : null
                   setCurrentImageOwnerId(null)
-                  void generate(prompt)
+                  void generate(prompt, aspect)
                 }}
               >
                 {t('Generate now')}
@@ -602,13 +636,15 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
                 </p>
                 <h2 className='mt-1 text-sm font-medium'>{stageTitle}</h2>
               </div>
-              <span className='text-muted-foreground text-xs'>1024×1024</span>
+              <span className='text-muted-foreground text-xs'>
+                {displayedMetadata.size.replace(' PNG', '')}
+              </span>
             </div>
             <div
               className={
                 displayedImageUrl
                   ? 'border-border/90 ring-primary/10 relative flex w-full max-w-[min(100%,42rem)] flex-col items-center justify-center self-center rounded-xl border border-dashed bg-[radial-gradient(circle_at_50%_38%,hsl(var(--primary)/.16),transparent_34%),linear-gradient(hsl(var(--border)/.3)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.3)_1px,transparent_1px)] bg-[size:auto,22px_22px,22px_22px] p-5 ring-1 ring-inset'
-                  : 'border-border/90 ring-primary/10 relative flex aspect-square w-full max-w-[min(100%,42rem)] items-center justify-center self-center overflow-hidden rounded-xl border border-dashed bg-[radial-gradient(circle_at_50%_38%,hsl(var(--primary)/.16),transparent_34%),linear-gradient(hsl(var(--border)/.3)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.3)_1px,transparent_1px)] bg-[size:auto,22px_22px,22px_22px] p-5 ring-1 ring-inset'
+                  : `border-border/90 ring-primary/10 relative flex ${aspectFrameClass(displayedMetadata.aspect)} w-full max-w-[min(100%,42rem)] items-center justify-center self-center overflow-hidden rounded-xl border border-dashed bg-[radial-gradient(circle_at_50%_38%,hsl(var(--primary)/.16),transparent_34%),linear-gradient(hsl(var(--border)/.3)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/.3)_1px,transparent_1px)] bg-[size:auto,22px_22px,22px_22px] p-5 ring-1 ring-inset`
               }
             >
               {stageContent}
