@@ -1,8 +1,13 @@
 package openai
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
+	"image/png"
 	"io"
 	"net/http"
 	"strconv"
@@ -21,6 +26,88 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+const imageStudioExpectedSizeContextKey = "image_studio_expected_size"
+const imageStudioMaxDecodedBytes = 20 * 1024 * 1024
+
+type imageStudioDimensions struct {
+	width  uint32
+	height uint32
+}
+
+func parseImageStudioSize(value string) (imageStudioDimensions, bool) {
+	var dimensions imageStudioDimensions
+	if _, err := fmt.Sscanf(value, "%dx%d", &dimensions.width, &dimensions.height); err != nil || dimensions.width == 0 || dimensions.height == 0 {
+		return imageStudioDimensions{}, false
+	}
+	return dimensions, true
+}
+
+func pngDimensionsFromBase64(value string, expected imageStudioDimensions) (imageStudioDimensions, error) {
+	if value == "" || len(value)%4 != 0 || strings.ContainsAny(value, " \t\r\n") {
+		return imageStudioDimensions{}, fmt.Errorf("missing image data")
+	}
+	padded := 0
+	if strings.HasSuffix(value, "==") {
+		padded = 2
+	} else if strings.HasSuffix(value, "=") {
+		padded = 1
+	}
+	decodedLength := len(value)/4*3 - padded
+	if decodedLength < 33 || decodedLength > imageStudioMaxDecodedBytes {
+		return imageStudioDimensions{}, fmt.Errorf("invalid image data")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil || len(decoded) != decodedLength {
+		return imageStudioDimensions{}, fmt.Errorf("invalid image data")
+	}
+	header := decoded[:33]
+	if string(header[:8]) != "\x89PNG\r\n\x1a\n" || binary.BigEndian.Uint32(header[8:12]) != 13 || string(header[12:16]) != "IHDR" || binary.BigEndian.Uint32(header[29:33]) != crc32.ChecksumIEEE(header[12:29]) {
+		return imageStudioDimensions{}, fmt.Errorf("invalid PNG image")
+	}
+	dimensions := imageStudioDimensions{
+		width:  binary.BigEndian.Uint32(header[16:20]),
+		height: binary.BigEndian.Uint32(header[20:24]),
+	}
+	if dimensions.width == 0 || dimensions.height == 0 {
+		return imageStudioDimensions{}, fmt.Errorf("invalid PNG dimensions")
+	}
+	if dimensions != expected {
+		return imageStudioDimensions{}, fmt.Errorf("invalid PNG dimensions")
+	}
+	config, err := png.DecodeConfig(bytes.NewReader(decoded))
+	if err != nil || config.Width != int(dimensions.width) || config.Height != int(dimensions.height) {
+		return imageStudioDimensions{}, fmt.Errorf("invalid PNG image")
+	}
+	if _, err := png.Decode(bytes.NewReader(decoded)); err != nil {
+		return imageStudioDimensions{}, fmt.Errorf("invalid PNG image")
+	}
+	return dimensions, nil
+}
+
+func validateImageStudioResponse(c *gin.Context, responseBody []byte) error {
+	expectedSize, ok := c.Get(imageStudioExpectedSizeContextKey)
+	if !ok {
+		return fmt.Errorf("missing image studio dimensions")
+	}
+	expectedSizeString, ok := expectedSize.(string)
+	if !ok {
+		return fmt.Errorf("invalid image studio dimensions")
+	}
+	expected, ok := parseImageStudioSize(expectedSizeString)
+	if !ok || gjson.GetBytes(responseBody, "data.#").Int() != 1 {
+		return fmt.Errorf("invalid image studio response")
+	}
+	image := gjson.GetBytes(responseBody, "data.0")
+	if image.Type != gjson.JSON || image.Get("b64_json").Type != gjson.String {
+		return fmt.Errorf("invalid image studio response")
+	}
+	_, err := pngDimensionsFromBase64(image.Get("b64_json").String(), expected)
+	if err != nil {
+		return fmt.Errorf("invalid image studio response")
+	}
+	return nil
+}
 
 func updateOpenAIImageCount(info *relaycommon.RelayInfo, count int64) {
 	if info == nil || !info.PriceData.UsePrice || count <= 0 || count > int64(dto.MaxImageN) {
@@ -47,6 +134,11 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 
 	if oaiError := usageResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+	}
+	if c.Request.URL.Path == "/pg/images/generations" {
+		if err := validateImageStudioResponse(c, responseBody); err != nil {
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
 	}
 
 	updateOpenAIImageCount(info, gjson.GetBytes(responseBody, "data.#").Int())

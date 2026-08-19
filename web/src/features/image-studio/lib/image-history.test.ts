@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, describe, test } from 'node:test'
+import { deflateSync } from 'node:zlib'
 
 import { GlobalRegistrator } from '@happy-dom/global-registrator'
 
@@ -15,6 +16,49 @@ import {
   type ImageHistoryItem,
 } from './image-history'
 
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+function png(width: number, height: number) {
+  const header = new Uint8Array(13)
+  const view = new DataView(header.buffer)
+  view.setUint32(0, width)
+  view.setUint32(4, height)
+  header[8] = 8
+  header[9] = 6
+  const chunk = (type: string, data: Uint8Array) => {
+    const bytes = new Uint8Array(data.length + 12)
+    new DataView(bytes.buffer).setUint32(0, data.length)
+    bytes.set(
+      [...type].map((character) => character.charCodeAt(0)),
+      4
+    )
+    bytes.set(data, 8)
+    new DataView(bytes.buffer).setUint32(
+      8 + data.length,
+      crc32(bytes.slice(4, 8 + data.length))
+    )
+    return bytes
+  }
+  const raw = new Uint8Array((width * 4 + 1) * height)
+  return new Uint8Array(
+    Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      Buffer.from(chunk('IHDR', header)),
+      Buffer.from(chunk('IDAT', deflateSync(raw))),
+      Buffer.from(chunk('IEND', new Uint8Array())),
+    ])
+  )
+}
+const squarePngHeader = png(1024, 1024)
+
 const ownerId = 47
 
 function createItem(
@@ -25,7 +69,13 @@ function createItem(
 ): ImageHistoryItem {
   return {
     aspect: 'square',
-    blob: new Blob([new Uint8Array(byteLength)], { type: 'image/png' }),
+    blob: new Blob(
+      [
+        squarePngHeader,
+        new Uint8Array(Math.max(0, byteLength - squarePngHeader.length)),
+      ],
+      { type: 'image/png' }
+    ),
     createdAt,
     generationId: `generation-${id}`,
     height: 1024,
@@ -108,15 +158,66 @@ describe('image history storage', () => {
     await saveImageHistoryItem({
       ...createItem('portrait', 1),
       aspect: 'portrait',
+      blob: new Blob([png(864, 1536)], { type: 'image/png' }),
       height: 1536,
-      size: '1024×1536 PNG',
+      size: '864×1536 PNG',
+      width: 864,
     })
 
     const [loaded] = await loadImageHistory(ownerId)
     assert.equal(loaded?.aspect, 'portrait')
-    assert.equal(loaded?.width, 1024)
+    assert.equal(loaded?.width, 864)
     assert.equal(loaded?.height, 1536)
-    assert.equal(loaded?.size, '1024×1536 PNG')
+    assert.equal(loaded?.size, '864×1536 PNG')
+  })
+
+  test('fails closed when a stored aspect declaration disagrees with PNG IHDR', async () => {
+    await assert.rejects(
+      () =>
+        saveImageHistoryItem({
+          ...createItem('mismatch', 1),
+          aspect: 'landscape',
+          width: 1536,
+          height: 864,
+          size: '1536×864 PNG',
+        }),
+      /Invalid image history item/
+    )
+  })
+
+  test('deletes direct IDB records with present but incorrect declarations', async () => {
+    const database = await openImageHistoryDatabase()
+    const transaction = database.transaction(['images', 'owners'], 'readwrite')
+    transaction.objectStore('images').put({
+      ...createItem('wrong-declaration', 1),
+      aspect: 'square',
+      width: 1536,
+    })
+    transaction.objectStore('owners').put({ ownerId })
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+    database.close()
+
+    assert.deepEqual(await loadImageHistory(ownerId), [])
+  })
+
+  test('deletes direct IDB records with an unknown aspect instead of normalizing them', async () => {
+    const database = await openImageHistoryDatabase()
+    const transaction = database.transaction(['images', 'owners'], 'readwrite')
+    transaction.objectStore('images').put({
+      ...createItem('unknown-aspect', 1),
+      aspect: 'unexpected',
+    })
+    transaction.objectStore('owners').put({ ownerId })
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+    database.close()
+
+    assert.deepEqual(await loadImageHistory(ownerId), [])
   })
 
   test('reads legacy records as square images without modifying the stored record', async () => {

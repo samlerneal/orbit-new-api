@@ -1,7 +1,13 @@
 package openai
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"hash/crc32"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +21,135 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func imageStudioPNG(width, height uint32) string {
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, int(width), int(height)))); err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(encoded.Bytes())
+}
+
+func imageStudioPNGWithLength(t *testing.T, width, height uint32, length int) string {
+	t.Helper()
+	bytes, err := base64.StdEncoding.DecodeString(imageStudioPNG(width, height))
+	require.NoError(t, err)
+	return base64.StdEncoding.EncodeToString(append(bytes, make([]byte, length-len(bytes))...))
+}
+
+func TestOpenaiImageHandlerValidatesImageStudioPNGBeforeForwarding(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		size string
+		png  string
+		want bool
+	}{
+		{"square", "1024x1024", imageStudioPNG(1024, 1024), true},
+		{"xiaohongshu", "1056x1408", imageStudioPNG(1056, 1408), true},
+		{"landscape", "1536x864", imageStudioPNG(1536, 864), true},
+		{"portrait", "864x1536", imageStudioPNG(864, 1536), true},
+		{"mismatch", "1536x864", imageStudioPNG(1024, 1024), false},
+		{"bad base64", "1024x1024", "not-base64", false},
+		{"base64 CRLF", "1024x1024", imageStudioPNG(1024, 1024) + "\r\n", false},
+		{"empty base64", "1024x1024", "", false},
+		{"multiple images", "1024x1024", imageStudioPNG(1024, 1024), false},
+		{"missing IHDR", "1024x1024", base64.StdEncoding.EncodeToString([]byte{137, 80, 78, 71, 13, 10, 26, 10}), false},
+		{"header only", "1024x1024", imageStudioHeaderOnly(1024, 1024), false},
+		{"missing IEND", "1024x1024", imageStudioWithoutIEND(t, 1024, 1024), false},
+		{"bad compressed data", "1024x1024", imageStudioBadCompressedData(t, 1024, 1024), false},
+		{"truncated IHDR", "1024x1024", imageStudioPNG(1024, 1024)[:32], false},
+		{"bad CRC", "1024x1024", imageStudioPNGBadCRC(t, 1024, 1024), false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			body := `{"data":[{"b64_json":"` + testCase.png + `"}]}`
+			if testCase.name == "multiple images" {
+				body = `{"data":[{"b64_json":"` + testCase.png + `"},{"b64_json":"` + testCase.png + `"}]}`
+			}
+			c, recorder, resp, info := newImageTestContext(t, body, "application/json", false)
+			c.Request.URL.Path = "/pg/images/generations"
+			c.Set(imageStudioExpectedSizeContextKey, testCase.size)
+			_, err := OpenaiImageHandler(c, info, resp)
+			if testCase.want {
+				require.Nil(t, err)
+				require.Equal(t, body, recorder.Body.String())
+			} else {
+				require.NotNil(t, err)
+				require.Empty(t, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func imageStudioHeaderOnly(width, height uint32) string {
+	bytes, _ := base64.StdEncoding.DecodeString(imageStudioPNG(width, height))
+	return base64.StdEncoding.EncodeToString(bytes[:33])
+}
+
+func imageStudioWithoutIEND(t *testing.T, width, height uint32) string {
+	t.Helper()
+	bytes, err := base64.StdEncoding.DecodeString(imageStudioPNG(width, height))
+	require.NoError(t, err)
+	return base64.StdEncoding.EncodeToString(bytes[:len(bytes)-12])
+}
+
+func imageStudioBadCompressedData(t *testing.T, width, height uint32) string {
+	t.Helper()
+	imageBytes, err := base64.StdEncoding.DecodeString(imageStudioPNG(width, height))
+	require.NoError(t, err)
+	for offset := 8; offset+12 <= len(imageBytes); {
+		chunkLength := int(binary.BigEndian.Uint32(imageBytes[offset : offset+4]))
+		dataOffset := offset + 8
+		crcOffset := dataOffset + chunkLength
+		require.LessOrEqual(t, crcOffset+4, len(imageBytes))
+
+		if string(imageBytes[offset+4:dataOffset]) == "IDAT" {
+			require.Greater(t, chunkLength, 2)
+			imageBytes[dataOffset+2] ^= 0xff
+			binary.BigEndian.PutUint32(imageBytes[crcOffset:crcOffset+4], crc32.ChecksumIEEE(imageBytes[offset+4:crcOffset]))
+			require.Equal(t, crc32.ChecksumIEEE(imageBytes[offset+4:crcOffset]), binary.BigEndian.Uint32(imageBytes[crcOffset:crcOffset+4]))
+			_, err = png.Decode(bytes.NewReader(imageBytes))
+			require.Error(t, err)
+			return base64.StdEncoding.EncodeToString(imageBytes)
+		}
+
+		offset = crcOffset + 4
+	}
+	require.Fail(t, "IDAT chunk not found")
+	return ""
+}
+
+func TestPNGDimensionsFromBase64HonorsExactDecodedLimitWithPadding(t *testing.T) {
+	exactLimit := imageStudioPNGWithLength(t, 1024, 1024, imageStudioMaxDecodedBytes)
+	_, err := pngDimensionsFromBase64(exactLimit, imageStudioDimensions{width: 1024, height: 1024})
+	require.NoError(t, err)
+
+	overLimit := imageStudioPNGWithLength(t, 1024, 1024, imageStudioMaxDecodedBytes+1)
+	_, err = pngDimensionsFromBase64(overLimit, imageStudioDimensions{width: 1024, height: 1024})
+	require.Error(t, err)
+}
+
+func imageStudioPNGBadCRC(t *testing.T, width, height uint32) string {
+	t.Helper()
+	bytes, err := base64.StdEncoding.DecodeString(imageStudioPNG(width, height))
+	require.NoError(t, err)
+	bytes[32] ^= 1
+	return base64.StdEncoding.EncodeToString(bytes)
+}
+
+func TestValidateImageStudioResponseRejectsNonStringContext(t *testing.T) {
+	c, _, _, _ := newImageTestContext(t, "", "application/json", false)
+	c.Set(imageStudioExpectedSizeContextKey, 1024)
+	err := validateImageStudioResponse(c, []byte(`{"data":[{"b64_json":"`+imageStudioPNG(1024, 1024)+`"}]}`))
+	require.Error(t, err)
+}
+
+func TestOpenaiImageHandlerLeavesPublicImageResponsesUntouched(t *testing.T) {
+	body := `{"data":[{"b64_json":"not-base64"},{"b64_json":"also-not-a-png"}]}`
+	c, recorder, resp, info := newImageTestContext(t, body, "application/json", false)
+	_, err := OpenaiImageHandler(c, info, resp)
+	require.Nil(t, err)
+	require.Equal(t, body, recorder.Body.String())
+}
 
 func newImageTestContext(t *testing.T, body, contentType string, isStream bool) (*gin.Context, *httptest.ResponseRecorder, *http.Response, *relaycommon.RelayInfo) {
 	t.Helper()

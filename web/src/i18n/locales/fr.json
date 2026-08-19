@@ -5262,6 +5262,10 @@
     "Capability matrix unavailable": "Matrice de capacité indisponible",
     "Image capability is unavailable for this channel.": "La capacité d'image est indisponible pour ce canal.",
     "Image probe completed.": "La sonde d'image est terminée.",
-    "Image probe failed.": "La sonde d'image a échoué."
+    "Image probe failed.": "La sonde d'image a échoué.",
+    "Square image": "Image carrée",
+    "Landscape": "Paysage",
+    "Xiaohongshu": "Xiaohongshu",
+    "Douyin": "Douyin"
   }
 }

@@ -1,5 +1,5 @@
 import { imageAspectMetadata, type ImageAspect } from '../types'
-import { maxImageBytes } from './image-generation'
+import { decodePngDimensions, maxImageBytes } from './image-generation'
 
 export const IMAGE_HISTORY_DATABASE = 'orbit-image-history'
 const IMAGE_HISTORY_STORE = 'images'
@@ -28,7 +28,7 @@ type StoredImageHistoryItem = Omit<
 > & {
   aspect?: unknown
   height?: unknown
-  size: string
+  size?: unknown
   width?: unknown
 }
 
@@ -48,7 +48,6 @@ function isValidImage(item: unknown): item is StoredImageHistoryItem {
     Number.isFinite(candidate.createdAt) &&
     typeof candidate.prompt === 'string' &&
     typeof candidate.model === 'string' &&
-    typeof candidate.size === 'string' &&
     candidate.blob instanceof Blob &&
     candidate.blob.size > 0 &&
     candidate.blob.size <= maxImageBytes &&
@@ -58,27 +57,58 @@ function isValidImage(item: unknown): item is StoredImageHistoryItem {
 
 function normalizeImageHistoryItem(
   item: StoredImageHistoryItem
-): ImageHistoryItem {
-  const aspect =
-    item.aspect === 'landscape' || item.aspect === 'portrait'
-      ? item.aspect
-      : 'square'
+): ImageHistoryItem | null {
+  const isLegacySquare = item.aspect === undefined
+  let aspect: ImageAspect | null = null
+  if (isLegacySquare) {
+    aspect = 'square'
+  } else if (
+    item.aspect === 'square' ||
+    item.aspect === 'xiaohongshu' ||
+    item.aspect === 'landscape' ||
+    item.aspect === 'portrait'
+  ) {
+    aspect = item.aspect
+  }
+  if (!aspect) return null
   const metadata = imageAspectMetadata[aspect]
+  if (
+    (!isLegacySquare &&
+      (item.width === undefined ||
+        item.height === undefined ||
+        item.size === undefined)) ||
+    (item.width !== undefined && item.width !== metadata.width) ||
+    (item.height !== undefined && item.height !== metadata.height) ||
+    (item.size !== undefined && item.size !== metadata.size)
+  ) {
+    return null
+  }
   return {
     ...item,
     aspect,
-    height:
-      typeof item.height === 'number' && item.height === metadata.height
-        ? item.height
-        : metadata.height,
-    size:
-      typeof item.size === 'string' && item.size === metadata.size
-        ? item.size
-        : metadata.size,
-    width:
-      typeof item.width === 'number' && item.width === metadata.width
-        ? item.width
-        : metadata.width,
+    height: metadata.height,
+    size: metadata.size,
+    width: metadata.width,
+  }
+}
+
+async function hasVerifiedImageFacts(
+  item: StoredImageHistoryItem
+): Promise<boolean> {
+  const normalized = normalizeImageHistoryItem(item)
+  if (!normalized) return false
+  const metadata = imageAspectMetadata[normalized.aspect]
+  try {
+    const dimensions = await decodePngDimensions(item.blob)
+    return (
+      dimensions.width === metadata.width &&
+      dimensions.height === metadata.height &&
+      normalized.width === metadata.width &&
+      normalized.height === metadata.height &&
+      normalized.size === metadata.size
+    )
+  } catch {
+    return false
   }
 }
 
@@ -189,10 +219,10 @@ async function withDatabase<T>(
 export async function loadImageHistory(
   ownerId: number
 ): Promise<ImageHistoryItem[]> {
-  return withDatabase(async (database) => {
+  const { owner, storedItems } = await withDatabase(async (database) => {
     const transaction = database.transaction(
       [IMAGE_HISTORY_STORE, IMAGE_HISTORY_OWNER_STORE],
-      'readwrite'
+      'readonly'
     )
     const images = transaction.objectStore(IMAGE_HISTORY_STORE)
     const owners = transaction.objectStore(IMAGE_HISTORY_OWNER_STORE)
@@ -205,31 +235,38 @@ export async function loadImageHistory(
         )
     )
 
-    if (!isOwnerRecord(owner, ownerId)) {
-      for (const item of storedItems) {
-        if (item && typeof item === 'object' && (item as { id?: unknown }).id) {
-          images.delete((item as { id: string }).id)
-        }
-      }
-      await completeTransaction(transaction)
-      return []
-    }
-
-    const validItems: ImageHistoryItem[] = []
-    for (const item of storedItems) {
-      if (isValidImage(item) && item.ownerId === ownerId) {
-        validItems.push(normalizeImageHistoryItem(item))
-      } else if (
-        item &&
-        typeof item === 'object' &&
-        (item as { id?: unknown }).id
-      ) {
-        images.delete((item as { id: string }).id)
-      }
-    }
     await completeTransaction(transaction)
-    return retainedItems(validItems)
+    return { owner, storedItems }
   })
+
+  const validItems: ImageHistoryItem[] = []
+  const invalidIds: string[] = []
+  for (const item of storedItems) {
+    if (
+      isOwnerRecord(owner, ownerId) &&
+      isValidImage(item) &&
+      item.ownerId === ownerId &&
+      (await hasVerifiedImageFacts(item))
+    ) {
+      const normalized = normalizeImageHistoryItem(item)
+      if (normalized) validItems.push(normalized)
+    } else if (
+      item &&
+      typeof item === 'object' &&
+      typeof (item as { id?: unknown }).id === 'string'
+    ) {
+      invalidIds.push((item as { id: string }).id)
+    }
+  }
+  if (invalidIds.length > 0) {
+    await withDatabase(async (database) => {
+      const transaction = database.transaction(IMAGE_HISTORY_STORE, 'readwrite')
+      const images = transaction.objectStore(IMAGE_HISTORY_STORE)
+      for (const id of invalidIds) images.delete(id)
+      await completeTransaction(transaction)
+    })
+  }
+  return retainedItems(validItems)
 }
 
 export async function saveImageHistoryItem(
@@ -244,6 +281,35 @@ export async function saveImageHistoryItem(
   ) {
     throw new Error('Invalid image history item')
   }
+  if (!(await hasVerifiedImageFacts(item))) {
+    throw new Error('Invalid image history item')
+  }
+  const existing = await withDatabase(async (database) => {
+    const transaction = database.transaction(IMAGE_HISTORY_STORE, 'readonly')
+    const request = transaction
+      .objectStore(IMAGE_HISTORY_STORE)
+      .index('ownerCreatedAt')
+      .getAll(
+        IDBKeyRange.bound(
+          [item.ownerId, 0],
+          [item.ownerId, Number.MAX_SAFE_INTEGER]
+        )
+      )
+    const result = await requestValue(request)
+    await completeTransaction(transaction)
+    return result
+  })
+  const verifiedExisting = (
+    await Promise.all(
+      existing.map(async (candidate) =>
+        isValidImage(candidate) &&
+        candidate.ownerId === item.ownerId &&
+        (await hasVerifiedImageFacts(candidate))
+          ? normalizeImageHistoryItem(candidate)
+          : null
+      )
+    )
+  ).filter((candidate): candidate is ImageHistoryItem => !!candidate)
   await withDatabase(async (database) => {
     const transaction = database.transaction(
       [IMAGE_HISTORY_STORE, IMAGE_HISTORY_OWNER_STORE],
@@ -251,7 +317,7 @@ export async function saveImageHistoryItem(
     )
     const images = transaction.objectStore(IMAGE_HISTORY_STORE)
     const owners = transaction.objectStore(IMAGE_HISTORY_OWNER_STORE)
-    const existing = await requestValue(
+    const current = await requestValue(
       images
         .index('ownerCreatedAt')
         .getAll(
@@ -261,20 +327,20 @@ export async function saveImageHistoryItem(
           )
         )
     )
-    const validExisting = existing.filter(
-      (candidate): candidate is StoredImageHistoryItem =>
-        isValidImage(candidate) && candidate.ownerId === item.ownerId
-    )
-    const duplicate = validExisting.some(
-      (candidate) => candidate.generationId === item.generationId
+    if (current.length !== existing.length) {
+      transaction.abort()
+      throw new Error('Image history operation failed')
+    }
+    const duplicate = current.some(
+      (candidate) =>
+        isValidImage(candidate) &&
+        candidate.ownerId === item.ownerId &&
+        candidate.generationId === item.generationId
     )
     if (!duplicate) {
-      const retained = retainedItems([
-        item,
-        ...validExisting.map(normalizeImageHistoryItem),
-      ])
+      const retained = retainedItems([item, ...verifiedExisting])
       const retainedIds = new Set(retained.map((candidate) => candidate.id))
-      for (const candidate of existing) {
+      for (const candidate of current) {
         if (
           candidate &&
           typeof candidate === 'object' &&

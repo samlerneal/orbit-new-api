@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { createImageBlob, revokeImageObjectUrl } from '../lib/image-generation'
+import {
+  createImageBlob,
+  decodePngDimensions,
+  revokeImageObjectUrl,
+} from '../lib/image-generation'
 import {
   imageAspectMetadata,
   type GeneratedImage,
@@ -61,15 +65,26 @@ export function createImageGenerationLifecycle(
       )
       if (controller !== activeController) return
       const blob = createImageBlob(response.data?.[0]?.b64_json || '')
+      const dimensions = await decodePngDimensions(blob)
+      if (controller !== activeController || activeController.signal.aborted) {
+        return
+      }
+      const expected = imageAspectMetadata[aspect]
+      if (
+        dimensions.width !== expected.width ||
+        dimensions.height !== expected.height
+      ) {
+        throw new Error('Invalid image response')
+      }
       imageUrl = URL.createObjectURL(blob)
       const generatedImage = {
         aspect,
         blob,
         generationId: crypto.randomUUID(),
-        height: imageAspectMetadata[aspect].height,
+        height: dimensions.height,
         imageUrl,
-        size: imageAspectMetadata[aspect].size,
-        width: imageAspectMetadata[aspect].width,
+        size: `${dimensions.width}×${dimensions.height} PNG`,
+        width: dimensions.width,
       }
       publishState({ status: 'success', imageUrl, error: null, generatedImage })
       currentSuccessHandler?.(generatedImage, prompt)

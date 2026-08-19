@@ -5262,6 +5262,10 @@
     "Capability matrix unavailable": "機能マトリクスを利用できません",
     "Image capability is unavailable for this channel.": "このチャネルでは画像機能を利用できません。",
     "Image probe completed.": "画像プローブが完了しました。",
-    "Image probe failed.": "画像プローブに失敗しました。"
+    "Image probe failed.": "画像プローブに失敗しました。",
+    "Square image": "正方形",
+    "Landscape": "横長",
+    "Xiaohongshu": "小紅書",
+    "Douyin": "抖音"
   }
 }

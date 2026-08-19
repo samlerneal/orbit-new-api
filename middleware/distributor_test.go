@@ -39,8 +39,9 @@ func TestNormalizeImageStudioRequestMapsAllowedAspectsToFixedSizes(t *testing.T)
 	}{
 		{name: "missing defaults to square", body: `{"prompt":"safe"}`, expectedSize: "1024x1024"},
 		{name: "square", body: `{"prompt":"safe","aspect":"square"}`, expectedSize: "1024x1024"},
-		{name: "landscape", body: `{"prompt":"safe","aspect":"landscape"}`, expectedSize: "1536x1024"},
-		{name: "portrait", body: `{"prompt":"safe","aspect":"portrait"}`, expectedSize: "1024x1536"},
+		{name: "xiaohongshu", body: `{"prompt":"safe","aspect":"xiaohongshu"}`, expectedSize: "1056x1408"},
+		{name: "landscape", body: `{"prompt":"safe","aspect":"landscape"}`, expectedSize: "1536x864"},
+		{name: "portrait", body: `{"prompt":"safe","aspect":"portrait"}`, expectedSize: "864x1536"},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {

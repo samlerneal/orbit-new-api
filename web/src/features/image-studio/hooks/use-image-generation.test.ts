@@ -1,11 +1,55 @@
 import assert from 'node:assert/strict'
-import { afterEach, describe, mock, test } from 'node:test'
+import { afterEach, beforeEach, describe, mock, test } from 'node:test'
+import { deflateSync } from 'node:zlib'
 
 import type { ImageGenerationResponse, ImageGenerationState } from '../types'
 import {
   createImageGenerationLifecycle,
   type ImageGenerationRequest,
 } from './use-image-generation'
+
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+function chunk(type: string, data: Uint8Array) {
+  const bytes = new Uint8Array(data.length + 12)
+  new DataView(bytes.buffer).setUint32(0, data.length)
+  bytes.set(
+    [...type].map((character) => character.charCodeAt(0)),
+    4
+  )
+  bytes.set(data, 8)
+  new DataView(bytes.buffer).setUint32(
+    8 + data.length,
+    crc32(bytes.slice(4, 8 + data.length))
+  )
+  return bytes
+}
+function pngBase64(width: number, height: number) {
+  const header = new Uint8Array(13)
+  const view = new DataView(header.buffer)
+  view.setUint32(0, width)
+  view.setUint32(4, height)
+  header[8] = 8
+  header[9] = 6
+  const raw = new Uint8Array((width * 4 + 1) * height)
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    Buffer.from(chunk('IHDR', header)),
+    Buffer.from(chunk('IDAT', deflateSync(raw))),
+    Buffer.from(chunk('IEND', new Uint8Array())),
+  ]).toString('base64')
+}
+const squarePngBase64 = pngBase64(1024, 1024)
+const portraitPngBase64 = pngBase64(864, 1536)
+const landscapePngBase64 = pngBase64(1536, 864)
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -17,7 +61,35 @@ function deferred<T>() {
   return { promise, reject, resolve }
 }
 
-afterEach(() => mock.restoreAll())
+const originalCreateImageBitmap = globalThis.createImageBitmap
+
+afterEach(() => {
+  mock.restoreAll()
+  if (originalCreateImageBitmap === undefined) {
+    delete (globalThis as { createImageBitmap?: typeof createImageBitmap })
+      .createImageBitmap
+  } else {
+    globalThis.createImageBitmap = originalCreateImageBitmap
+  }
+})
+
+beforeEach(() => {
+  ;(
+    globalThis as typeof globalThis & {
+      createImageBitmap: typeof createImageBitmap
+    }
+  ).createImageBitmap = async (blob) => {
+    const bytes = new Uint8Array(
+      await (blob as Blob).slice(0, 33).arrayBuffer()
+    )
+    const view = new DataView(bytes.buffer)
+    return {
+      close: () => undefined,
+      height: view.getUint32(20),
+      width: view.getUint32(16),
+    } as ImageBitmap
+  }
+})
 
 describe('image generation request lifecycle', () => {
   test('sends one request through repeated generate calls', async () => {
@@ -49,7 +121,7 @@ describe('image generation request lifecycle', () => {
 
   test('does not retry after success, failure, or stopping the wait', async () => {
     const responses = [
-      Promise.resolve({ data: [{ b64_json: 'iVBORw0KGgo=' }] }),
+      Promise.resolve({ data: [{ b64_json: squarePngBase64 }] }),
       Promise.reject(new Error('fake failure')),
       deferred<ImageGenerationResponse>(),
     ]
@@ -82,12 +154,31 @@ describe('image generation request lifecycle', () => {
     assert.equal(requests, 3)
   })
 
+  test('rejects a valid PNG whose IHDR does not match the request snapshot', async () => {
+    const mismatched = squarePngBase64
+    mock.method(URL, 'createObjectURL', () => 'blob:unexpected')
+    const lifecycle = createImageGenerationLifecycle(
+      () => Promise.resolve({ data: [{ b64_json: mismatched }] }),
+      () => undefined
+    )
+    await lifecycle.generate('fixture', 'landscape')
+    assert.equal(lifecycle.getState().status, 'error')
+  })
+
   test('persists only the single decoded blob from a successful response', async () => {
     const successfulImages: Array<{ generationId: string; prompt: string }> = []
     mock.method(URL, 'createObjectURL', () => 'blob:generated')
     mock.method(crypto, 'randomUUID', () => 'fixed-generation-id')
     const lifecycle = createImageGenerationLifecycle(
-      () => Promise.resolve({ data: [{ b64_json: 'iVBORw0KGgo=' }] }),
+      (_prompt, aspect) =>
+        Promise.resolve({
+          data: [
+            {
+              b64_json:
+                aspect === 'portrait' ? portraitPngBase64 : squarePngBase64,
+            },
+          ],
+        }),
       () => undefined,
       (image, prompt) => {
         successfulImages.push({ generationId: image.generationId, prompt })
@@ -108,8 +199,15 @@ describe('image generation request lifecycle', () => {
     let created = 0
     mock.method(URL, 'createObjectURL', () => `blob:${++created}`)
     mock.method(URL, 'revokeObjectURL', (url: string) => revoked.push(url))
-    const requestImage: ImageGenerationRequest = () =>
-      Promise.resolve({ data: [{ b64_json: 'iVBORw0KGgo=' }] })
+    const requestImage: ImageGenerationRequest = (_prompt, aspect) =>
+      Promise.resolve({
+        data: [
+          {
+            b64_json:
+              aspect === 'landscape' ? landscapePngBase64 : squarePngBase64,
+          },
+        ],
+      })
     const lifecycle = createImageGenerationLifecycle(
       requestImage,
       () => undefined
@@ -127,7 +225,7 @@ describe('image generation request lifecycle', () => {
     mock.method(URL, 'createObjectURL', () => 'blob:current')
     mock.method(URL, 'revokeObjectURL', (url: string) => revoked.push(url))
     const lifecycle = createImageGenerationLifecycle(
-      () => Promise.resolve({ data: [{ b64_json: 'iVBORw0KGgo=' }] }),
+      () => Promise.resolve({ data: [{ b64_json: squarePngBase64 }] }),
       () => undefined
     )
 
@@ -138,4 +236,50 @@ describe('image generation request lifecycle', () => {
     assert.deepEqual(revoked, ['blob:current'])
     assert.equal(lifecycle.getState().status, 'idle')
   })
+
+  for (const action of ['stopWaiting', 'dispose'] as const) {
+    test(`does not publish a late decoded image after ${action}`, async () => {
+      const decoded = deferred<ArrayBuffer>()
+      const states: ImageGenerationState[] = []
+      const successfulImages: unknown[] = []
+      const header = Uint8Array.from(atob(squarePngBase64), (character) =>
+        character.charCodeAt(0)
+      )
+      mock.method(
+        Blob.prototype,
+        'slice',
+        () =>
+          ({
+            arrayBuffer: () => decoded.promise,
+          }) as Blob
+      )
+      const createObjectURL = mock.method(
+        URL,
+        'createObjectURL',
+        () => 'blob:late'
+      )
+      const lifecycle = createImageGenerationLifecycle(
+        () => Promise.resolve({ data: [{ b64_json: squarePngBase64 }] }),
+        (state) => states.push(state),
+        (image) => successfulImages.push(image)
+      )
+
+      const generating = lifecycle.generate('late fixture', 'square')
+      await Promise.resolve()
+      lifecycle[action]()
+      decoded.resolve(header.buffer)
+      await generating
+
+      assert.equal(createObjectURL.mock.calls.length, 0)
+      assert.deepEqual(successfulImages, [])
+      assert.equal(
+        lifecycle.getState().status,
+        action === 'dispose' ? 'idle' : 'error'
+      )
+      assert.equal(
+        states.at(-1)?.status,
+        action === 'dispose' ? 'idle' : 'error'
+      )
+    })
+  }
 })

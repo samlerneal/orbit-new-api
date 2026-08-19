@@ -5262,6 +5262,10 @@
     "Capability matrix unavailable": "Ma trận khả năng hiện không khả dụng",
     "Image capability is unavailable for this channel.": "Khả năng hình ảnh không khả dụng cho kênh này.",
     "Image probe completed.": "Thăm dò hình ảnh đã hoàn tất.",
-    "Image probe failed.": "Thăm dò hình ảnh thất bại."
+    "Image probe failed.": "Thăm dò hình ảnh thất bại.",
+    "Square image": "Ảnh vuông",
+    "Landscape": "Ảnh ngang",
+    "Xiaohongshu": "Xiaohongshu",
+    "Douyin": "Douyin"
   }
 }

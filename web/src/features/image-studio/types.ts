@@ -1,4 +1,4 @@
-export type ImageAspect = 'square' | 'landscape' | 'portrait'
+export type ImageAspect = 'square' | 'xiaohongshu' | 'landscape' | 'portrait'
 
 export const imageAspectMetadata: Record<
   ImageAspect,
@@ -10,17 +10,23 @@ export const imageAspectMetadata: Record<
     size: '1024×1024 PNG',
     width: 1024,
   },
+  xiaohongshu: {
+    aspect: 'xiaohongshu',
+    height: 1408,
+    size: '1056×1408 PNG',
+    width: 1056,
+  },
   landscape: {
     aspect: 'landscape',
-    height: 1024,
-    size: '1536×1024 PNG',
+    height: 864,
+    size: '1536×864 PNG',
     width: 1536,
   },
   portrait: {
     aspect: 'portrait',
     height: 1536,
-    size: '1024×1536 PNG',
-    width: 1024,
+    size: '864×1536 PNG',
+    width: 864,
   },
 }
 

@@ -38,10 +38,13 @@ type imageStudioRequest struct {
 }
 
 var imageStudioAspectSizes = map[string]string{
-	"square":    "1024x1024",
-	"landscape": "1536x1024",
-	"portrait":  "1024x1536",
+	"square":      "1024x1024",
+	"xiaohongshu": "1056x1408",
+	"landscape":   "1536x864",
+	"portrait":    "864x1536",
 }
+
+const imageStudioExpectedSizeContextKey = "image_studio_expected_size"
 
 func normalizeImageStudioRequest(c *gin.Context) error {
 	storage, err := common.GetBodyStorage(c)
@@ -99,6 +102,7 @@ func normalizeImageStudioRequest(c *gin.Context) error {
 	c.Request.Body = io.NopCloser(bytes.NewReader(fixedBody))
 	c.Request.ContentLength = int64(len(fixedBody))
 	c.Request.Header.Set("Content-Type", gin.MIMEJSON)
+	c.Set(imageStudioExpectedSizeContextKey, size)
 	return nil
 }
 

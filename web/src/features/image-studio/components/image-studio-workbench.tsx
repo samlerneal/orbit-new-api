@@ -28,15 +28,21 @@ const configurationSections = [
   },
 ]
 
-const aspectOptions: Array<{ aspect: ImageAspect; label: string }> = [
-  { aspect: 'square', label: '1:1' },
-  { aspect: 'landscape', label: 'Landscape' },
-  { aspect: 'portrait', label: 'Portrait' },
+const aspectOptions: Array<{
+  aspect: ImageAspect
+  label: string
+  ratio: string
+}> = [
+  { aspect: 'square', label: 'Square image', ratio: '1:1' },
+  { aspect: 'xiaohongshu', label: 'Xiaohongshu', ratio: '3:4' },
+  { aspect: 'landscape', label: 'Landscape', ratio: '16:9' },
+  { aspect: 'portrait', label: 'Douyin', ratio: '9:16' },
 ]
 
 function aspectFrameClass(aspect: ImageAspect): string {
-  if (aspect === 'landscape') return 'aspect-[3/2]'
-  if (aspect === 'portrait') return 'aspect-[2/3]'
+  if (aspect === 'xiaohongshu') return 'aspect-[3/4]'
+  if (aspect === 'landscape') return 'aspect-video'
+  if (aspect === 'portrait') return 'aspect-[9/16]'
   return 'aspect-square'
 }
 
@@ -528,7 +534,10 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
                       onClick={() => setAspect(option.aspect)}
                       aria-pressed={aspect === option.aspect}
                     >
-                      {t(option.label)}
+                      <span className='flex flex-col items-center text-center leading-tight'>
+                        <span>{t(option.label)}</span>
+                        <span className='text-[11px]'>{option.ratio}</span>
+                      </span>
                     </button>
                   ))}
                   <DisabledOption

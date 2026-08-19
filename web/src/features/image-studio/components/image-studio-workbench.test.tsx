@@ -1,11 +1,54 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, describe, test } from 'node:test'
+import { deflateSync } from 'node:zlib'
 
 import { GlobalRegistrator } from '@happy-dom/global-registrator'
 import type { Root } from 'react-dom/client'
 
 import type { ImageGenerationRequest } from '../hooks/use-image-generation'
 import type { ImageHistoryItem } from '../lib/image-history'
+
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+function pngBase64(width: number, height: number) {
+  const header = new Uint8Array(13)
+  const view = new DataView(header.buffer)
+  view.setUint32(0, width)
+  view.setUint32(4, height)
+  header[8] = 8
+  header[9] = 6
+  const raw = new Uint8Array((width * 4 + 1) * height)
+  const chunk = (type: string, data: Uint8Array) => {
+    const bytes = new Uint8Array(data.length + 12)
+    new DataView(bytes.buffer).setUint32(0, data.length)
+    bytes.set(
+      [...type].map((character) => character.charCodeAt(0)),
+      4
+    )
+    bytes.set(data, 8)
+    new DataView(bytes.buffer).setUint32(
+      8 + data.length,
+      crc32(bytes.slice(4, 8 + data.length))
+    )
+    return Buffer.from(bytes)
+  }
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', new Uint8Array()),
+  ]).toString('base64')
+}
+const squarePngBase64 = pngBase64(1024, 1024)
+const landscapePngBase64 = pngBase64(1536, 864)
 
 let act: typeof import('react').act
 let createElement: typeof import('react').createElement
@@ -29,11 +72,18 @@ const pendingRequest: ImageGenerationRequest = (prompt, aspect, signal) => {
   return new Promise(() => undefined)
 }
 
-function aspectButton(label: string) {
-  const button = [...container.querySelectorAll('button')].find(
-    (candidate) => candidate.textContent === label
-  )
+function aspectButton(label: string, ratio: string) {
+  const button = [...container.querySelectorAll('button')].find((candidate) => {
+    const lines =
+      candidate.querySelector('span > span')?.parentElement?.children
+    return (
+      lines?.length === 2 &&
+      lines[0]?.textContent === label &&
+      lines[1]?.textContent === ratio
+    )
+  })
   assert.ok(button)
+  assert.equal(button.textContent, `${label}${ratio}`)
   return button as HTMLButtonElement
 }
 
@@ -171,6 +221,18 @@ after(() => {
 })
 
 describe('image studio workbench', () => {
+  test('exposes all four aspect controls as two-line buttons', () => {
+    renderWorkbench()
+    for (const [label, ratio] of [
+      ['Square image', '1:1'],
+      ['Xiaohongshu', '3:4'],
+      ['Landscape', '16:9'],
+      ['Douyin', '9:16'],
+    ]) {
+      assert.ok(aspectButton(label, ratio))
+    }
+  })
+
   test('does not loop when the real history URL scope updates after history initialization', async () => {
     const originalConsoleError = console.error
     const consoleErrors: string[] = []
@@ -238,30 +300,30 @@ describe('image studio workbench', () => {
       requests.push({ prompt, aspect, signal })
       return response.promise
     })
-    flushSync(() => aspectButton('Landscape').click())
+    flushSync(() => aspectButton('Landscape', '16:9').click())
     flushSync(() => setTextareaValue('A wide local fixture'))
     flushSync(() => generateButton().click())
-    flushSync(() => aspectButton('Portrait').click())
+    flushSync(() => aspectButton('Douyin', '9:16').click())
     assert.deepEqual(
       requests.map(({ aspect }) => aspect),
       ['landscape']
     )
     assert.match(
       container.querySelector('[data-image-studio-stage]')?.textContent ?? '',
-      /1536×1024/
+      /1536×864/
     )
 
-    response.resolve({ data: [{ b64_json: 'iVBORw0KGgo=' }] })
+    response.resolve({ data: [{ b64_json: landscapePngBase64 }] })
     await act(async () => {
       await Promise.resolve()
     })
     const stage = container.querySelector('[data-image-studio-stage]')
     assert.ok(stage)
-    assert.match(stage.textContent ?? '', /1536×1024/)
+    assert.match(stage.textContent ?? '', /1536×864/)
     assert.match(stage.querySelector('img')?.className ?? '', /object-contain/)
     assert.match(
       stage.querySelector('img')?.parentElement?.className ?? '',
-      /aspect-\[3\/2\]/
+      /aspect-video/
     )
   })
 
@@ -277,7 +339,7 @@ describe('image studio workbench', () => {
 
   test('keeps the successful image frame separate from the accessible download action', async () => {
     renderWorkbench(async () => ({
-      data: [{ b64_json: 'iVBORw0KGgo=' }],
+      data: [{ b64_json: squarePngBase64 }],
     }))
     flushSync(() => setTextareaValue('A fixed local test image'))
     flushSync(() => generateButton().click())
@@ -309,7 +371,7 @@ describe('image studio workbench', () => {
     URL.revokeObjectURL = (url) => revoked.push(url)
     try {
       renderWorkbench(async () => ({
-        data: [{ b64_json: 'iVBORw0KGgo=' }],
+        data: [{ b64_json: squarePngBase64 }],
       }))
       flushSync(() => setTextareaValue('A private local fixture'))
       flushSync(() => generateButton().click())
@@ -374,7 +436,7 @@ describe('image studio workbench', () => {
             .getState()
             .auth.setBootstrapState(nextAuth.bootstrapState)
         })
-        response.resolve({ data: [{ b64_json: 'iVBORw0KGgo=' }] })
+        response.resolve({ data: [{ b64_json: squarePngBase64 }] })
         await act(async () => {
           await Promise.resolve()
         })
