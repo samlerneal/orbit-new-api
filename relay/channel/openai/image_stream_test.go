@@ -47,9 +47,9 @@ func TestOpenaiImageHandlerValidatesImageStudioPNGBeforeForwarding(t *testing.T)
 	}{
 		{"square", "1024x1024", imageStudioPNG(1024, 1024), true},
 		{"xiaohongshu", "1056x1408", imageStudioPNG(1056, 1408), true},
-		{"landscape", "1536x864", imageStudioPNG(1536, 864), true},
+		{"landscape", "1536x1024", imageStudioPNG(1536, 1024), true},
 		{"portrait", "864x1536", imageStudioPNG(864, 1536), true},
-		{"mismatch", "1536x864", imageStudioPNG(1024, 1024), false},
+		{"mismatch", "1536x1024", imageStudioPNG(1024, 1024), false},
 		{"bad base64", "1024x1024", "not-base64", false},
 		{"base64 CRLF", "1024x1024", imageStudioPNG(1024, 1024) + "\r\n", false},
 		{"empty base64", "1024x1024", "", false},

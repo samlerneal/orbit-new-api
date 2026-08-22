@@ -30,18 +30,17 @@ const configurationSections = [
 
 const aspectOptions: Array<{
   aspect: ImageAspect
+  available: boolean
   label: string
-  ratio: string
 }> = [
-  { aspect: 'square', label: 'Square image', ratio: '1:1' },
-  { aspect: 'xiaohongshu', label: 'Xiaohongshu', ratio: '3:4' },
-  { aspect: 'landscape', label: 'Landscape', ratio: '16:9' },
-  { aspect: 'portrait', label: 'Douyin', ratio: '9:16' },
+  { aspect: 'square', available: false, label: 'Square image' },
+  { aspect: 'landscape', available: true, label: 'Landscape' },
+  { aspect: 'portrait', available: false, label: 'Portrait' },
 ]
 
 function aspectFrameClass(aspect: ImageAspect): string {
   if (aspect === 'xiaohongshu') return 'aspect-[3/4]'
-  if (aspect === 'landscape') return 'aspect-video'
+  if (aspect === 'landscape') return 'aspect-[3/2]'
   if (aspect === 'portrait') return 'aspect-[9/16]'
   return 'aspect-square'
 }
@@ -205,7 +204,7 @@ export function ImageHistoryPanel(props: ImageHistoryPanelProps) {
 export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
   const { t } = useTranslation()
   const [prompt, setPrompt] = useState('')
-  const [aspect, setAspect] = useState<ImageAspect>('square')
+  const [aspect, setAspect] = useState<ImageAspect>('landscape')
   const authOwnerId = useAuthStore((state) => state.auth.user?.id ?? null)
   const authReady = useAuthStore(
     (state) => state.auth.bootstrapState === 'complete'
@@ -526,20 +525,27 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
                   {t('Aspect ratio')}
                 </p>
                 <div className='grid grid-cols-4 gap-1.5'>
-                  {aspectOptions.map((option) => (
-                    <button
-                      className={`min-h-8 rounded-md border px-2 text-xs font-medium ${aspect === option.aspect ? 'border-primary/50 bg-primary/10 text-foreground' : 'border-border/70 text-muted-foreground hover:border-primary/60'}`}
-                      type='button'
-                      key={option.aspect}
-                      onClick={() => setAspect(option.aspect)}
-                      aria-pressed={aspect === option.aspect}
-                    >
-                      <span className='flex flex-col items-center text-center leading-tight'>
-                        <span>{t(option.label)}</span>
-                        <span className='text-[11px]'>{option.ratio}</span>
-                      </span>
-                    </button>
-                  ))}
+                  {aspectOptions.map((option) =>
+                    option.available ? (
+                      <button
+                        className={`min-h-8 rounded-md border px-2 text-xs font-medium ${aspect === option.aspect ? 'border-primary/50 bg-primary/10 text-foreground' : 'border-border/70 text-muted-foreground hover:border-primary/60'}`}
+                        type='button'
+                        key={option.aspect}
+                        onClick={() => setAspect(option.aspect)}
+                        aria-pressed={aspect === option.aspect}
+                      >
+                        {t(option.label)}
+                      </button>
+                    ) : (
+                      <DisabledOption
+                        key={option.aspect}
+                        id={`aspect-${option.aspect}`}
+                        label={t(option.label)}
+                        tooltip={disabledTooltip}
+                        fullWidth
+                      />
+                    )
+                  )}
                   <DisabledOption
                     id='aspect-Custom'
                     label={t('Custom')}
@@ -638,16 +644,13 @@ export function ImageStudioWorkbench(props: ImageStudioWorkbenchProps) {
             data-image-studio-stage
             aria-live='polite'
           >
-            <div className='border-border/70 mb-4 flex items-center justify-between border-b px-1 pb-4'>
+            <div className='border-border/70 mb-4 border-b px-1 pb-4'>
               <div>
                 <p className='text-muted-foreground text-xs tracking-[0.15em] uppercase'>
                   {t('Generation result')}
                 </p>
                 <h2 className='mt-1 text-sm font-medium'>{stageTitle}</h2>
               </div>
-              <span className='text-muted-foreground text-xs'>
-                {displayedMetadata.size.replace(' PNG', '')}
-              </span>
             </div>
             <div
               className={

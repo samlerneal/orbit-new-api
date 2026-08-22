@@ -47,8 +47,7 @@ function pngBase64(width: number, height: number) {
     chunk('IEND', new Uint8Array()),
   ]).toString('base64')
 }
-const squarePngBase64 = pngBase64(1024, 1024)
-const landscapePngBase64 = pngBase64(1536, 864)
+const landscapePngBase64 = pngBase64(1536, 1024)
 
 let act: typeof import('react').act
 let createElement: typeof import('react').createElement
@@ -72,18 +71,11 @@ const pendingRequest: ImageGenerationRequest = (prompt, aspect, signal) => {
   return new Promise(() => undefined)
 }
 
-function aspectButton(label: string, ratio: string) {
-  const button = [...container.querySelectorAll('button')].find((candidate) => {
-    const lines =
-      candidate.querySelector('span > span')?.parentElement?.children
-    return (
-      lines?.length === 2 &&
-      lines[0]?.textContent === label &&
-      lines[1]?.textContent === ratio
-    )
-  })
+function aspectButton(label: string) {
+  const button = [...container.querySelectorAll('button')].find(
+    (candidate) => candidate.textContent === label
+  )
   assert.ok(button)
-  assert.equal(button.textContent, `${label}${ratio}`)
   return button as HTMLButtonElement
 }
 
@@ -221,16 +213,17 @@ after(() => {
 })
 
 describe('image studio workbench', () => {
-  test('exposes all four aspect controls as two-line buttons', () => {
+  test('exposes semantic aspect controls without ratios or pixel sizes', () => {
     renderWorkbench()
-    for (const [label, ratio] of [
-      ['Square image', '1:1'],
-      ['Xiaohongshu', '3:4'],
-      ['Landscape', '16:9'],
-      ['Douyin', '9:16'],
-    ]) {
-      assert.ok(aspectButton(label, ratio))
-    }
+    assert.equal(aspectButton('Square image').disabled, true)
+    assert.equal(aspectButton('Landscape').disabled, false)
+    assert.equal(aspectButton('Portrait').disabled, true)
+    assert.equal(aspectButton('Custom').disabled, true)
+    assert.doesNotMatch(container.textContent ?? '', /1:1|3:4|3:2|16:9|9:16/)
+    assert.doesNotMatch(
+      container.querySelector('[data-image-studio-stage]')?.textContent ?? '',
+      /\d{3,4}×\d{3,4}/
+    )
   })
 
   test('does not loop when the real history URL scope updates after history initialization', async () => {
@@ -278,7 +271,7 @@ describe('image studio workbench', () => {
     flushSync(() => generateButton().click())
     assert.deepEqual(
       requests.map(({ prompt, aspect }) => ({ prompt, aspect })),
-      [{ prompt: '画一只猫', aspect: 'square' }]
+      [{ prompt: '画一只猫', aspect: 'landscape' }]
     )
 
     assert.equal(
@@ -300,17 +293,16 @@ describe('image studio workbench', () => {
       requests.push({ prompt, aspect, signal })
       return response.promise
     })
-    flushSync(() => aspectButton('Landscape', '16:9').click())
     flushSync(() => setTextareaValue('A wide local fixture'))
     flushSync(() => generateButton().click())
-    flushSync(() => aspectButton('Douyin', '9:16').click())
+    flushSync(() => aspectButton('Portrait').click())
     assert.deepEqual(
       requests.map(({ aspect }) => aspect),
       ['landscape']
     )
-    assert.match(
+    assert.doesNotMatch(
       container.querySelector('[data-image-studio-stage]')?.textContent ?? '',
-      /1536×864/
+      /1536×1024/
     )
 
     response.resolve({ data: [{ b64_json: landscapePngBase64 }] })
@@ -319,11 +311,11 @@ describe('image studio workbench', () => {
     })
     const stage = container.querySelector('[data-image-studio-stage]')
     assert.ok(stage)
-    assert.match(stage.textContent ?? '', /1536×864/)
+    assert.doesNotMatch(stage.textContent ?? '', /1536×1024/)
     assert.match(stage.querySelector('img')?.className ?? '', /object-contain/)
     assert.match(
       stage.querySelector('img')?.parentElement?.className ?? '',
-      /aspect-video/
+      /aspect-\[3\/2\]/
     )
   })
 
@@ -339,7 +331,7 @@ describe('image studio workbench', () => {
 
   test('keeps the successful image frame separate from the accessible download action', async () => {
     renderWorkbench(async () => ({
-      data: [{ b64_json: squarePngBase64 }],
+      data: [{ b64_json: landscapePngBase64 }],
     }))
     flushSync(() => setTextareaValue('A fixed local test image'))
     flushSync(() => generateButton().click())
@@ -358,7 +350,7 @@ describe('image studio workbench', () => {
 
     const imageFrame = image.parentElement
     assert.ok(imageFrame)
-    assert.equal(imageFrame.classList.contains('aspect-square'), true)
+    assert.equal(imageFrame.classList.contains('aspect-[3/2]'), true)
     assert.equal(imageFrame.contains(download), false)
     assert.equal(stage.contains(download), true)
   })
@@ -371,7 +363,7 @@ describe('image studio workbench', () => {
     URL.revokeObjectURL = (url) => revoked.push(url)
     try {
       renderWorkbench(async () => ({
-        data: [{ b64_json: squarePngBase64 }],
+        data: [{ b64_json: landscapePngBase64 }],
       }))
       flushSync(() => setTextareaValue('A private local fixture'))
       flushSync(() => generateButton().click())
@@ -436,7 +428,7 @@ describe('image studio workbench', () => {
             .getState()
             .auth.setBootstrapState(nextAuth.bootstrapState)
         })
-        response.resolve({ data: [{ b64_json: squarePngBase64 }] })
+        response.resolve({ data: [{ b64_json: landscapePngBase64 }] })
         await act(async () => {
           await Promise.resolve()
         })
@@ -638,15 +630,15 @@ describe('image studio workbench', () => {
     )
     assert.ok(settings)
     const disabledControls = settings.querySelectorAll('button[disabled]')
-    assert.equal(disabledControls.length, 6)
+    assert.equal(disabledControls.length, 8)
     const firstDisabledControl = disabledControls[0]
     if (!(firstDisabledControl instanceof HTMLButtonElement)) {
       throw new Error('Expected the first disabled control to be a button.')
     }
     firstDisabledControl.click()
     assert.equal(requests.length, 0)
-    assert.equal(container.querySelectorAll('button[disabled]').length, 8)
-    assert.equal(container.querySelectorAll('[role="tooltip"]').length, 7)
+    assert.equal(container.querySelectorAll('button[disabled]').length, 10)
+    assert.equal(container.querySelectorAll('[role="tooltip"]').length, 9)
     assert.match(stage.textContent ?? '', /AI image studio/)
     assert.match(stage.textContent ?? '', /Generation result/)
     assert.match(stage.textContent ?? '', /Ready/)

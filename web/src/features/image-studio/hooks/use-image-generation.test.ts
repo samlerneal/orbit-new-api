@@ -49,7 +49,7 @@ function pngBase64(width: number, height: number) {
 }
 const squarePngBase64 = pngBase64(1024, 1024)
 const portraitPngBase64 = pngBase64(864, 1536)
-const landscapePngBase64 = pngBase64(1536, 864)
+const landscapePngBase64 = pngBase64(1536, 1024)
 
 function deferred<T>() {
   let resolve!: (value: T) => void

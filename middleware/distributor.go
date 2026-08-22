@@ -38,10 +38,7 @@ type imageStudioRequest struct {
 }
 
 var imageStudioAspectSizes = map[string]string{
-	"square":      "1024x1024",
-	"xiaohongshu": "1056x1408",
-	"landscape":   "1536x864",
-	"portrait":    "864x1536",
+	"landscape": "1536x1024",
 }
 
 const imageStudioExpectedSizeContextKey = "image_studio_expected_size"
@@ -67,14 +64,14 @@ func normalizeImageStudioRequest(c *gin.Context) error {
 			return errors.New("invalid image studio request")
 		}
 	}
-	size := imageStudioAspectSizes["square"]
-	if rawAspect, ok := raw["aspect"]; ok {
-		aspect, isString := rawAspect.(string)
-		var isAllowed bool
-		size, isAllowed = imageStudioAspectSizes[aspect]
-		if !isString || !isAllowed {
-			return errors.New("invalid image studio request")
-		}
+	rawAspect, ok := raw["aspect"]
+	if !ok {
+		return errors.New("invalid image studio request")
+	}
+	aspect, isString := rawAspect.(string)
+	size, isAllowed := imageStudioAspectSizes[aspect]
+	if !isString || !isAllowed {
+		return errors.New("invalid image studio request")
 	}
 	var request imageStudioRequest
 	if err := common.UnmarshalBodyReusable(c, &request); err != nil {

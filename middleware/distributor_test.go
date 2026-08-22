@@ -13,7 +13,7 @@ import (
 
 func TestNormalizeImageStudioRequestReplacesClientSpecification(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest("POST", "/pg/images/generations", strings.NewReader(`{"prompt":"  山水  "}`))
+	c.Request = httptest.NewRequest("POST", "/pg/images/generations", strings.NewReader(`{"prompt":"  山水  ","aspect":"landscape"}`))
 	c.Request.Header.Set("Content-Type", gin.MIMEJSON)
 
 	require.NoError(t, normalizeImageStudioRequest(c))
@@ -21,7 +21,7 @@ func TestNormalizeImageStudioRequestReplacesClientSpecification(t *testing.T) {
 	require.NoError(t, err)
 	body, err := storage.Bytes()
 	require.NoError(t, err)
-	require.JSONEq(t, `{"model":"gpt-image-2","prompt":"山水","n":1,"size":"1024x1024","quality":"low","response_format":"b64_json","background":"opaque","output_format":"png","stream":false}`, string(body))
+	require.JSONEq(t, `{"model":"gpt-image-2","prompt":"山水","n":1,"size":"1536x1024","quality":"low","response_format":"b64_json","background":"opaque","output_format":"png","stream":false}`, string(body))
 	var rewritten struct {
 		Prompt string `json:"prompt"`
 		Model  string `json:"model"`
@@ -31,39 +31,28 @@ func TestNormalizeImageStudioRequestReplacesClientSpecification(t *testing.T) {
 	require.Equal(t, "gpt-image-2", rewritten.Model)
 }
 
-func TestNormalizeImageStudioRequestMapsAllowedAspectsToFixedSizes(t *testing.T) {
-	testCases := []struct {
-		name         string
-		body         string
-		expectedSize string
-	}{
-		{name: "missing defaults to square", body: `{"prompt":"safe"}`, expectedSize: "1024x1024"},
-		{name: "square", body: `{"prompt":"safe","aspect":"square"}`, expectedSize: "1024x1024"},
-		{name: "xiaohongshu", body: `{"prompt":"safe","aspect":"xiaohongshu"}`, expectedSize: "1056x1408"},
-		{name: "landscape", body: `{"prompt":"safe","aspect":"landscape"}`, expectedSize: "1536x864"},
-		{name: "portrait", body: `{"prompt":"safe","aspect":"portrait"}`, expectedSize: "864x1536"},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest("POST", "/pg/images/generations", strings.NewReader(testCase.body))
-			c.Request.Header.Set("Content-Type", gin.MIMEJSON)
+func TestNormalizeImageStudioRequestMapsLandscapeToVerifiedNativeSize(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/pg/images/generations", strings.NewReader(`{"prompt":"safe","aspect":"landscape"}`))
+	c.Request.Header.Set("Content-Type", gin.MIMEJSON)
 
-			require.NoError(t, normalizeImageStudioRequest(c))
-			storage, err := common.GetBodyStorage(c)
-			require.NoError(t, err)
-			body, err := storage.Bytes()
-			require.NoError(t, err)
-			require.JSONEq(t, fmt.Sprintf(`{"model":"gpt-image-2","prompt":"safe","n":1,"size":"%s","quality":"low","response_format":"b64_json","background":"opaque","output_format":"png","stream":false}`, testCase.expectedSize), string(body))
-		})
-	}
+	require.NoError(t, normalizeImageStudioRequest(c))
+	storage, err := common.GetBodyStorage(c)
+	require.NoError(t, err)
+	body, err := storage.Bytes()
+	require.NoError(t, err)
+	require.JSONEq(t, `{"model":"gpt-image-2","prompt":"safe","n":1,"size":"1536x1024","quality":"low","response_format":"b64_json","background":"opaque","output_format":"png","stream":false}`, string(body))
 }
 
 func TestNormalizeImageStudioRequestRejectsInvalidAspectValues(t *testing.T) {
 	for _, body := range []string{
+		`{"prompt":"safe"}`,
 		`{"prompt":"safe","aspect":""}`,
 		`{"prompt":"safe","aspect":null}`,
 		`{"prompt":"safe","aspect":1}`,
+		`{"prompt":"safe","aspect":"square"}`,
+		`{"prompt":"safe","aspect":"xiaohongshu"}`,
+		`{"prompt":"safe","aspect":"portrait"}`,
 		`{"prompt":"safe","aspect":"Square"}`,
 		`{"prompt":"safe","aspect":"wide"}`,
 	} {
@@ -88,12 +77,12 @@ func TestNormalizeImageStudioRequestEnforcesUnicodeAndSpecificationBoundaries(t 
 		body     string
 		accepted bool
 	}{
-		{name: "empty", body: `{"prompt":""}`},
-		{name: "whitespace", body: `{"prompt":" \t\n "}`},
-		{name: "emoji 4000", body: fmt.Sprintf(`{"prompt":"%s"}`, strings.Repeat("😀", 4000)), accepted: true},
-		{name: "emoji 4001", body: fmt.Sprintf(`{"prompt":"%s"}`, strings.Repeat("😀", 4001))},
-		{name: "Chinese 4000", body: fmt.Sprintf(`{"prompt":"%s"}`, strings.Repeat("山", 4000)), accepted: true},
-		{name: "combining 4000", body: fmt.Sprintf(`{"prompt":"%s"}`, strings.Repeat("e\u0301", 2000)), accepted: true},
+		{name: "empty", body: `{"prompt":"","aspect":"landscape"}`},
+		{name: "whitespace", body: `{"prompt":" \t\n ","aspect":"landscape"}`},
+		{name: "emoji 4000", body: fmt.Sprintf(`{"prompt":"%s","aspect":"landscape"}`, strings.Repeat("😀", 4000)), accepted: true},
+		{name: "emoji 4001", body: fmt.Sprintf(`{"prompt":"%s","aspect":"landscape"}`, strings.Repeat("😀", 4001))},
+		{name: "Chinese 4000", body: fmt.Sprintf(`{"prompt":"%s","aspect":"landscape"}`, strings.Repeat("山", 4000)), accepted: true},
+		{name: "combining 4000", body: fmt.Sprintf(`{"prompt":"%s","aspect":"landscape"}`, strings.Repeat("e\u0301", 2000)), accepted: true},
 	}
 	for _, field := range []string{
 		"model", "size", "n", "quality", "output_format", "response_format",
@@ -103,7 +92,7 @@ func TestNormalizeImageStudioRequestEnforcesUnicodeAndSpecificationBoundaries(t 
 			name     string
 			body     string
 			accepted bool
-		}{name: "rejects client " + field, body: fmt.Sprintf(`{"prompt":"safe","%s":"override"}`, field)})
+		}{name: "rejects client " + field, body: fmt.Sprintf(`{"prompt":"safe","aspect":"landscape","%s":"override"}`, field)})
 	}
 
 	for _, testCase := range testCases {

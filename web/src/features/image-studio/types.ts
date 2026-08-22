@@ -18,8 +18,8 @@ export const imageAspectMetadata: Record<
   },
   landscape: {
     aspect: 'landscape',
-    height: 864,
-    size: '1536×864 PNG',
+    height: 1024,
+    size: '1536×1024 PNG',
     width: 1536,
   },
   portrait: {

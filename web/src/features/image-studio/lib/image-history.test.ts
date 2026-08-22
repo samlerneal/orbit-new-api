@@ -178,8 +178,8 @@ describe('image history storage', () => {
           ...createItem('mismatch', 1),
           aspect: 'landscape',
           width: 1536,
-          height: 864,
-          size: '1536×864 PNG',
+          height: 1024,
+          size: '1536×1024 PNG',
         }),
       /Invalid image history item/
     )
