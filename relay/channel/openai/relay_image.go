@@ -35,6 +35,43 @@ type imageStudioDimensions struct {
 	height uint32
 }
 
+type imageStudioValidationReason string
+
+const (
+	imageStudioReasonExpectedSizeInvalid imageStudioValidationReason = "EXPECTED_SIZE_INVALID"
+	imageStudioReasonImageCountMismatch  imageStudioValidationReason = "IMAGE_COUNT_MISMATCH"
+	imageStudioReasonB64Missing          imageStudioValidationReason = "B64_MISSING"
+	imageStudioReasonB64Invalid          imageStudioValidationReason = "B64_INVALID"
+	imageStudioReasonPNGInvalid          imageStudioValidationReason = "PNG_INVALID"
+	imageStudioReasonDimensionMismatch   imageStudioValidationReason = "DIMENSION_MISMATCH"
+)
+
+type imageStudioValidationError struct {
+	reason   imageStudioValidationReason
+	expected imageStudioDimensions
+	actual   imageStudioDimensions
+}
+
+func (err *imageStudioValidationError) Error() string {
+	return "invalid image studio response"
+}
+
+func (err *imageStudioValidationError) safeLogMessage() string {
+	expected := "unknown"
+	if err.expected.width > 0 && err.expected.height > 0 {
+		expected = fmt.Sprintf("%dx%d", err.expected.width, err.expected.height)
+	}
+	actual := "unknown"
+	if err.actual.width > 0 && err.actual.height > 0 {
+		actual = fmt.Sprintf("%dx%d", err.actual.width, err.actual.height)
+	}
+	return fmt.Sprintf("image studio response rejected: reason=%s expected=%s actual=%s", err.reason, expected, actual)
+}
+
+func newImageStudioValidationError(reason imageStudioValidationReason, expected, actual imageStudioDimensions) error {
+	return &imageStudioValidationError{reason: reason, expected: expected, actual: actual}
+}
+
 func parseImageStudioSize(value string) (imageStudioDimensions, bool) {
 	var dimensions imageStudioDimensions
 	if _, err := fmt.Sscanf(value, "%dx%d", &dimensions.width, &dimensions.height); err != nil || dimensions.width == 0 || dimensions.height == 0 {
@@ -44,8 +81,11 @@ func parseImageStudioSize(value string) (imageStudioDimensions, bool) {
 }
 
 func pngDimensionsFromBase64(value string, expected imageStudioDimensions) (imageStudioDimensions, error) {
-	if value == "" || len(value)%4 != 0 || strings.ContainsAny(value, " \t\r\n") {
-		return imageStudioDimensions{}, fmt.Errorf("missing image data")
+	if value == "" {
+		return imageStudioDimensions{}, newImageStudioValidationError(imageStudioReasonB64Missing, expected, imageStudioDimensions{})
+	}
+	if len(value)%4 != 0 || strings.ContainsAny(value, " \t\r\n") {
+		return imageStudioDimensions{}, newImageStudioValidationError(imageStudioReasonB64Invalid, expected, imageStudioDimensions{})
 	}
 	padded := 0
 	if strings.HasSuffix(value, "==") {
@@ -55,32 +95,32 @@ func pngDimensionsFromBase64(value string, expected imageStudioDimensions) (imag
 	}
 	decodedLength := len(value)/4*3 - padded
 	if decodedLength < 33 || decodedLength > imageStudioMaxDecodedBytes {
-		return imageStudioDimensions{}, fmt.Errorf("invalid image data")
+		return imageStudioDimensions{}, newImageStudioValidationError(imageStudioReasonB64Invalid, expected, imageStudioDimensions{})
 	}
 	decoded, err := base64.StdEncoding.DecodeString(value)
 	if err != nil || len(decoded) != decodedLength {
-		return imageStudioDimensions{}, fmt.Errorf("invalid image data")
+		return imageStudioDimensions{}, newImageStudioValidationError(imageStudioReasonB64Invalid, expected, imageStudioDimensions{})
 	}
 	header := decoded[:33]
 	if string(header[:8]) != "\x89PNG\r\n\x1a\n" || binary.BigEndian.Uint32(header[8:12]) != 13 || string(header[12:16]) != "IHDR" || binary.BigEndian.Uint32(header[29:33]) != crc32.ChecksumIEEE(header[12:29]) {
-		return imageStudioDimensions{}, fmt.Errorf("invalid PNG image")
+		return imageStudioDimensions{}, newImageStudioValidationError(imageStudioReasonPNGInvalid, expected, imageStudioDimensions{})
 	}
 	dimensions := imageStudioDimensions{
 		width:  binary.BigEndian.Uint32(header[16:20]),
 		height: binary.BigEndian.Uint32(header[20:24]),
 	}
 	if dimensions.width == 0 || dimensions.height == 0 {
-		return imageStudioDimensions{}, fmt.Errorf("invalid PNG dimensions")
+		return imageStudioDimensions{}, newImageStudioValidationError(imageStudioReasonPNGInvalid, expected, dimensions)
 	}
 	if dimensions != expected {
-		return imageStudioDimensions{}, fmt.Errorf("invalid PNG dimensions")
+		return imageStudioDimensions{}, newImageStudioValidationError(imageStudioReasonDimensionMismatch, expected, dimensions)
 	}
 	config, err := png.DecodeConfig(bytes.NewReader(decoded))
 	if err != nil || config.Width != int(dimensions.width) || config.Height != int(dimensions.height) {
-		return imageStudioDimensions{}, fmt.Errorf("invalid PNG image")
+		return imageStudioDimensions{}, newImageStudioValidationError(imageStudioReasonPNGInvalid, expected, dimensions)
 	}
 	if _, err := png.Decode(bytes.NewReader(decoded)); err != nil {
-		return imageStudioDimensions{}, fmt.Errorf("invalid PNG image")
+		return imageStudioDimensions{}, newImageStudioValidationError(imageStudioReasonPNGInvalid, expected, dimensions)
 	}
 	return dimensions, nil
 }
@@ -88,25 +128,28 @@ func pngDimensionsFromBase64(value string, expected imageStudioDimensions) (imag
 func validateImageStudioResponse(c *gin.Context, responseBody []byte) error {
 	expectedSize, ok := c.Get(imageStudioExpectedSizeContextKey)
 	if !ok {
-		return fmt.Errorf("missing image studio dimensions")
+		return newImageStudioValidationError(imageStudioReasonExpectedSizeInvalid, imageStudioDimensions{}, imageStudioDimensions{})
 	}
 	expectedSizeString, ok := expectedSize.(string)
 	if !ok {
-		return fmt.Errorf("invalid image studio dimensions")
+		return newImageStudioValidationError(imageStudioReasonExpectedSizeInvalid, imageStudioDimensions{}, imageStudioDimensions{})
 	}
 	expected, ok := parseImageStudioSize(expectedSizeString)
-	if !ok || gjson.GetBytes(responseBody, "data.#").Int() != 1 {
-		return fmt.Errorf("invalid image studio response")
+	if !ok {
+		return newImageStudioValidationError(imageStudioReasonExpectedSizeInvalid, imageStudioDimensions{}, imageStudioDimensions{})
+	}
+	if gjson.GetBytes(responseBody, "data.#").Int() != 1 {
+		return newImageStudioValidationError(imageStudioReasonImageCountMismatch, expected, imageStudioDimensions{})
 	}
 	image := gjson.GetBytes(responseBody, "data.0")
-	if image.Type != gjson.JSON || image.Get("b64_json").Type != gjson.String {
-		return fmt.Errorf("invalid image studio response")
+	if image.Type != gjson.JSON || !image.Get("b64_json").Exists() {
+		return newImageStudioValidationError(imageStudioReasonB64Missing, expected, imageStudioDimensions{})
+	}
+	if image.Get("b64_json").Type != gjson.String {
+		return newImageStudioValidationError(imageStudioReasonB64Invalid, expected, imageStudioDimensions{})
 	}
 	_, err := pngDimensionsFromBase64(image.Get("b64_json").String(), expected)
-	if err != nil {
-		return fmt.Errorf("invalid image studio response")
-	}
-	return nil
+	return err
 }
 
 func updateOpenAIImageCount(info *relaycommon.RelayInfo, count int64) {
@@ -137,6 +180,11 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 	}
 	if c.Request.URL.Path == "/pg/images/generations" {
 		if err := validateImageStudioResponse(c, responseBody); err != nil {
+			if validationErr, ok := err.(*imageStudioValidationError); ok {
+				logger.LogError(c, validationErr.safeLogMessage())
+			} else {
+				logger.LogError(c, "image studio response rejected: reason=UNKNOWN expected=unknown actual=unknown")
+			}
 			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
 	}

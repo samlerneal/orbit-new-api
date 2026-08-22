@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -140,7 +141,156 @@ func TestValidateImageStudioResponseRejectsNonStringContext(t *testing.T) {
 	c, _, _, _ := newImageTestContext(t, "", "application/json", false)
 	c.Set(imageStudioExpectedSizeContextKey, 1024)
 	err := validateImageStudioResponse(c, []byte(`{"data":[{"b64_json":"`+imageStudioPNG(1024, 1024)+`"}]}`))
-	require.Error(t, err)
+	validationErr, ok := err.(*imageStudioValidationError)
+	require.True(t, ok)
+	require.Equal(t, imageStudioReasonExpectedSizeInvalid, validationErr.reason)
+	require.Equal(t, "image studio response rejected: reason=EXPECTED_SIZE_INVALID expected=unknown actual=unknown", validationErr.safeLogMessage())
+}
+
+func TestValidateImageStudioResponseClassifiesSafeFailureReasons(t *testing.T) {
+	validPNG := imageStudioPNG(1024, 1024)
+	mismatchedPNG := imageStudioPNG(1536, 864)
+	for _, testCase := range []struct {
+		name       string
+		body       string
+		wantReason imageStudioValidationReason
+		wantActual imageStudioDimensions
+	}{
+		{"image count mismatch", `{"data":[]}`, imageStudioReasonImageCountMismatch, imageStudioDimensions{}},
+		{"missing b64", `{"data":[{}]}`, imageStudioReasonB64Missing, imageStudioDimensions{}},
+		{"non-string b64", `{"data":[{"b64_json":1}]}`, imageStudioReasonB64Invalid, imageStudioDimensions{}},
+		{"invalid b64", `{"data":[{"b64_json":"not-base64"}]}`, imageStudioReasonB64Invalid, imageStudioDimensions{}},
+		{"invalid png", `{"data":[{"b64_json":"` + base64.StdEncoding.EncodeToString([]byte("not a png payload that is long enough")) + `"}]}`, imageStudioReasonPNGInvalid, imageStudioDimensions{}},
+		{"dimension mismatch", `{"data":[{"b64_json":"` + mismatchedPNG + `"}]}`, imageStudioReasonDimensionMismatch, imageStudioDimensions{width: 1536, height: 864}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, _, _, _ := newImageTestContext(t, "", "application/json", false)
+			c.Set(imageStudioExpectedSizeContextKey, "1024x1024")
+
+			err := validateImageStudioResponse(c, []byte(testCase.body))
+
+			validationErr, ok := err.(*imageStudioValidationError)
+			require.True(t, ok)
+			require.Equal(t, testCase.wantReason, validationErr.reason)
+			require.Equal(t, imageStudioDimensions{width: 1024, height: 1024}, validationErr.expected)
+			require.Equal(t, testCase.wantActual, validationErr.actual)
+			require.Equal(t, "invalid image studio response", validationErr.Error())
+			require.NotContains(t, validationErr.safeLogMessage(), validPNG)
+			require.NotContains(t, validationErr.safeLogMessage(), mismatchedPNG)
+		})
+	}
+}
+
+func TestOpenaiImageHandlerLogsOnlySafeImageStudioReasonAndDimensions(t *testing.T) {
+	sensitiveMarkers := []string{
+		"PROMPT_MARKER",
+		"BASE64_MARKER",
+		"BODY_MARKER",
+		"TOKEN_MARKER",
+		"COOKIE_MARKER",
+		"OAUTH_MARKER",
+		"UPSTREAM_MESSAGE_MARKER",
+	}
+	marker := strings.Join(sensitiveMarkers, "_")
+
+	validPNG := imageStudioPNG(1024, 1024)
+	for _, testCase := range []struct {
+		name       string
+		body       string
+		expected   string
+		wantReason string
+		actual     string
+	}{
+		{
+			name:       "expected size invalid",
+			body:       `{"body_marker":"` + marker + `","data":[{"b64_json":"` + validPNG + `"}]}`,
+			expected:   "unknown",
+			wantReason: string(imageStudioReasonExpectedSizeInvalid),
+			actual:     "unknown",
+		},
+		{
+			name:       "image count mismatch",
+			body:       `{"body_marker":"` + marker + `","data":[]}`,
+			expected:   "1024x1024",
+			wantReason: string(imageStudioReasonImageCountMismatch),
+			actual:     "unknown",
+		},
+		{
+			name:       "base64 missing",
+			body:       `{"body_marker":"` + marker + `","data":[{"upstream_message":"` + marker + `"}]}`,
+			expected:   "1024x1024",
+			wantReason: string(imageStudioReasonB64Missing),
+			actual:     "unknown",
+		},
+		{
+			name:       "base64 invalid",
+			body:       `{"body_marker":"` + marker + `","data":[{"b64_json":"BASE64_MARKER"}]}`,
+			expected:   "1024x1024",
+			wantReason: string(imageStudioReasonB64Invalid),
+			actual:     "unknown",
+		},
+		{
+			name:       "png invalid",
+			body:       `{"body_marker":"` + marker + `","data":[{"b64_json":"` + base64.StdEncoding.EncodeToString([]byte("not a png payload that is long enough")) + `"}]}`,
+			expected:   "1024x1024",
+			wantReason: string(imageStudioReasonPNGInvalid),
+			actual:     "unknown",
+		},
+		{
+			name:       "dimension mismatch",
+			body:       `{"body_marker":"` + marker + `","data":[{"b64_json":"` + imageStudioPNG(1536, 864) + `"}]}`,
+			expected:   "1024x1024",
+			wantReason: string(imageStudioReasonDimensionMismatch),
+			actual:     "1536x864",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			common.LogWriterMu.Lock()
+			oldErrorWriter := gin.DefaultErrorWriter
+			gin.DefaultErrorWriter = &logs
+			common.LogWriterMu.Unlock()
+			t.Cleanup(func() {
+				common.LogWriterMu.Lock()
+				gin.DefaultErrorWriter = oldErrorWriter
+				common.LogWriterMu.Unlock()
+			})
+
+			c, recorder, resp, info := newImageTestContext(t, testCase.body, "application/json", false)
+			c.Request.URL.Path = "/pg/images/generations"
+			c.Request.Body = io.NopCloser(strings.NewReader("prompt=" + marker))
+			c.Request.Header.Set("Authorization", "Bearer "+marker)
+			c.Request.Header.Set("Cookie", marker)
+			c.Request.Header.Set("X-OAuth-Marker", marker)
+			if testCase.name == "expected size invalid" {
+				c.Set(imageStudioExpectedSizeContextKey, marker)
+			} else {
+				c.Set(imageStudioExpectedSizeContextKey, "1024x1024")
+			}
+
+			_, apiErr := OpenaiImageHandler(c, info, resp)
+
+			require.Error(t, apiErr)
+			require.Empty(t, recorder.Body.String())
+			logOutput := logs.String()
+			logMessage := strings.TrimSpace(logOutput[strings.LastIndex(logOutput, "|")+1:])
+			require.Equal(t, "image studio response rejected: reason="+testCase.wantReason+" expected="+testCase.expected+" actual="+testCase.actual, logMessage)
+			for _, sensitiveMarker := range sensitiveMarkers {
+				require.NotContains(t, logOutput, sensitiveMarker)
+			}
+			require.Contains(t, logOutput, "reason="+testCase.wantReason)
+			require.Contains(t, logOutput, "expected="+testCase.expected)
+			require.Contains(t, logOutput, "actual="+testCase.actual)
+			require.NotContains(t, logOutput, "reason=UNKNOWN")
+			require.NotContains(t, logOutput, "prompt")
+			require.NotContains(t, logOutput, "base64")
+			require.NotContains(t, logOutput, "body")
+			require.NotContains(t, logOutput, "token")
+			require.NotContains(t, logOutput, "cookie")
+			require.NotContains(t, logOutput, "oauth")
+			require.NotContains(t, logOutput, "upstream")
+		})
+	}
 }
 
 func TestOpenaiImageHandlerLeavesPublicImageResponsesUntouched(t *testing.T) {
