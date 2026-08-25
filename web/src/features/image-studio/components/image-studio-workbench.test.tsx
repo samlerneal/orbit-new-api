@@ -217,7 +217,7 @@ describe('image studio workbench', () => {
     renderWorkbench()
     assert.equal(aspectButton('Square image').disabled, false)
     assert.equal(aspectButton('Landscape').disabled, false)
-    assert.equal(aspectButton('Portrait').disabled, false)
+    assert.equal(aspectButton('Portrait').disabled, true)
     assert.equal(aspectButton('Custom').disabled, true)
     assert.doesNotMatch(container.textContent ?? '', /1:1|3:4|3:2|16:9|9:16/)
     assert.doesNotMatch(
@@ -295,7 +295,7 @@ describe('image studio workbench', () => {
     })
     flushSync(() => setTextareaValue('A wide local fixture'))
     flushSync(() => generateButton().click())
-    flushSync(() => aspectButton('Portrait').click())
+    flushSync(() => aspectButton('Square image').click())
     assert.deepEqual(
       requests.map(({ aspect }) => aspect),
       ['landscape']
@@ -630,15 +630,15 @@ describe('image studio workbench', () => {
     )
     assert.ok(settings)
     const disabledControls = settings.querySelectorAll('button[disabled]')
-    assert.equal(disabledControls.length, 8)
+    assert.equal(disabledControls.length, 7)
     const firstDisabledControl = disabledControls[0]
     if (!(firstDisabledControl instanceof HTMLButtonElement)) {
       throw new Error('Expected the first disabled control to be a button.')
     }
     firstDisabledControl.click()
     assert.equal(requests.length, 0)
-    assert.equal(container.querySelectorAll('button[disabled]').length, 10)
-    assert.equal(container.querySelectorAll('[role="tooltip"]').length, 9)
+    assert.equal(container.querySelectorAll('button[disabled]').length, 9)
+    assert.equal(container.querySelectorAll('[role="tooltip"]').length, 8)
     assert.match(stage.textContent ?? '', /AI image studio/)
     assert.match(stage.textContent ?? '', /Generation result/)
     assert.match(stage.textContent ?? '', /Ready/)

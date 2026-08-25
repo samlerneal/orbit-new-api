@@ -35,7 +35,7 @@ const aspectOptions: Array<{
 }> = [
   { aspect: 'square', available: true, label: 'Square image' },
   { aspect: 'landscape', available: true, label: 'Landscape' },
-  { aspect: 'portrait', available: true, label: 'Portrait' },
+  { aspect: 'portrait', available: false, label: 'Portrait' },
 ]
 
 function aspectFrameClass(aspect: ImageAspect): string {

@@ -38,7 +38,6 @@ func TestNormalizeImageStudioRequestMapsOnlyNativePresetSizes(t *testing.T) {
 	}{
 		{aspect: "square", size: "1024x1024"},
 		{aspect: "landscape", size: "1536x1024"},
-		{aspect: "portrait", size: "1024x1536"},
 	} {
 		t.Run(testCase.aspect, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -64,6 +63,8 @@ func TestNormalizeImageStudioRequestRejectsInvalidAspectValues(t *testing.T) {
 		`{"prompt":"safe","aspect":"xiaohongshu"}`,
 		`{"prompt":"safe","aspect":"Square"}`,
 		`{"prompt":"safe","aspect":"wide"}`,
+		`{"prompt":"safe","aspect":"portrait"}`,
+		`{"prompt":"safe","aspect":"custom"}`,
 	} {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = httptest.NewRequest("POST", "/pg/images/generations", strings.NewReader(body))
