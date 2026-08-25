@@ -23,6 +23,7 @@ import {
   canSubmitPackagePayment,
   createPackagePaymentRequest,
   getTopupPackageVisualStyleClasses,
+  isEpayPaymentMethod,
   isTopupPackageVisualStyle,
   REFUND_NOTICE_VERSION,
 } from './types.ts'
@@ -35,7 +36,7 @@ describe('package payment refund notice gate', () => {
   })
 
   test('adds the accepted refund notice fields to the package request', () => {
-    const request = createPackagePaymentRequest('package-1', {
+    const request = createPackagePaymentRequest('package-1', 'alipay', {
       refund_notice_accepted: true,
       refund_notice_version: REFUND_NOTICE_VERSION,
       refund_notice_language: 'zhCN',
@@ -43,11 +44,24 @@ describe('package payment refund notice gate', () => {
 
     assert.deepEqual(request, {
       package_id: 'package-1',
-      payment_method: 'wxpay',
+      payment_method: 'alipay',
       refund_notice_accepted: true,
       refund_notice_version: 'refund-notice-v1',
       refund_notice_language: 'zhCN',
     })
+  })
+
+  test('allows only the two adapter-backed payment methods', () => {
+    assert.equal(isEpayPaymentMethod('wxpay'), true)
+    assert.equal(isEpayPaymentMethod('alipay'), true)
+    assert.equal(isEpayPaymentMethod('custom1'), false)
+    assert.throws(() =>
+      createPackagePaymentRequest('package-1', 'custom1', {
+        refund_notice_accepted: true,
+        refund_notice_version: REFUND_NOTICE_VERSION,
+        refund_notice_language: 'zhCN',
+      })
+    )
   })
 })
 

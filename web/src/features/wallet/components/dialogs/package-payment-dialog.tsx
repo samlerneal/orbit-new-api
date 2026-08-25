@@ -39,9 +39,11 @@ import { normalizeInterfaceLanguage } from '@/i18n/languages'
 import { formatLocalCurrencyAmount } from '@/lib/currency'
 
 import { getPaymentIcon } from '../../lib'
+import { getPaymentMethodName } from '../../lib/billing'
 import {
   canSubmitPackagePayment,
   REFUND_NOTICE_VERSION,
+  type EpayPaymentMethod,
   type RefundNoticeAcceptance,
   type SupportContact,
   type TopupPackage,
@@ -51,9 +53,13 @@ interface PackagePaymentDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   packageOption: TopupPackage | null
+  paymentMethods: EpayPaymentMethod[]
   supportContacts: SupportContact[]
   processing: boolean
-  onPay: (refundNotice: RefundNoticeAcceptance) => void | Promise<void>
+  onPay: (
+    paymentMethod: EpayPaymentMethod,
+    refundNotice: RefundNoticeAcceptance
+  ) => void | Promise<void>
 }
 
 function getSupportContactLabel(type: SupportContact['type']) {
@@ -80,12 +86,12 @@ export function PackagePaymentDialog(props: PackagePaymentDialogProps) {
     setRefundNoticeExpanded(false)
   }, [packageOption?.id, props.open])
 
-  const handlePay = () => {
+  const handlePay = (paymentMethod: EpayPaymentMethod) => {
     if (!canSubmitPackagePayment(refundNoticeAccepted, props.processing)) {
       return
     }
 
-    props.onPay({
+    props.onPay(paymentMethod, {
       refund_notice_accepted: true,
       refund_notice_version: REFUND_NOTICE_VERSION,
       refund_notice_language: normalizeInterfaceLanguage(
@@ -101,9 +107,7 @@ export function PackagePaymentDialog(props: PackagePaymentDialogProps) {
           <DialogTitle className='text-xl'>
             {t('Select payment method')}
           </DialogTitle>
-          <DialogDescription>
-            {t('Confirm the amount, then continue with WeChat Pay.')}
-          </DialogDescription>
+          <DialogDescription>{t('Payment details')}</DialogDescription>
         </DialogHeader>
 
         {packageOption && (
@@ -202,24 +206,27 @@ export function PackagePaymentDialog(props: PackagePaymentDialogProps) {
 
             <div className='space-y-2'>
               <div className='text-sm font-medium'>{t('Payment Method')}</div>
-              <Button
-                variant='outline'
-                className='h-14 w-full justify-center gap-3 rounded-xl text-base'
-                onClick={handlePay}
-                disabled={
-                  !canSubmitPackagePayment(
-                    refundNoticeAccepted,
-                    props.processing
-                  )
-                }
-              >
-                {props.processing ? (
-                  <Loader2 className='size-5 animate-spin' />
-                ) : (
-                  getPaymentIcon('wxpay', 'size-5')
-                )}
-                {t('WeChat Pay')}
-              </Button>
+              {props.paymentMethods.map((paymentMethod) => (
+                <Button
+                  key={paymentMethod}
+                  variant='outline'
+                  className='h-14 w-full justify-center gap-3 rounded-xl text-base'
+                  onClick={() => handlePay(paymentMethod)}
+                  disabled={
+                    !canSubmitPackagePayment(
+                      refundNoticeAccepted,
+                      props.processing
+                    )
+                  }
+                >
+                  {props.processing ? (
+                    <Loader2 className='size-5 animate-spin' />
+                  ) : (
+                    getPaymentIcon(paymentMethod, 'size-5')
+                  )}
+                  {getPaymentMethodName(paymentMethod, t)}
+                </Button>
+              ))}
             </div>
           </div>
         )}

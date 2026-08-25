@@ -30,7 +30,9 @@ import { TopupPackageGrid } from './components/topup-package-grid'
 import { WalletStatsCard } from './components/wallet-stats-card'
 import { usePackagePayment, useTopupInfo } from './hooks'
 import {
+  isEpayPaymentMethod,
   REFUND_NOTICE_VERSION,
+  type EpayPaymentMethod,
   type RefundNoticeAcceptance,
   type TopupPackage,
   type UserWalletData,
@@ -81,11 +83,15 @@ export function Wallet(props: WalletProps) {
     setPaymentDialogOpen(true)
   }
 
-  const handlePay = async (refundNotice: RefundNoticeAcceptance) => {
+  const handlePay = async (
+    paymentMethod: EpayPaymentMethod,
+    refundNotice: RefundNoticeAcceptance
+  ) => {
     if (!selectedPackage) return
 
     const success = await processPackagePayment(
       selectedPackage.id,
+      paymentMethod,
       refundNotice
     )
     if (success) {
@@ -93,10 +99,17 @@ export function Wallet(props: WalletProps) {
     }
   }
 
+  const epayPaymentMethods = [
+    ...new Set(
+      (topupInfo?.pay_methods ?? [])
+        .map((method) => method.type)
+        .filter(isEpayPaymentMethod)
+    ),
+  ]
   const paymentAvailable =
     topupInfo?.enable_online_topup === true &&
     topupInfo.refund_notice_version === REFUND_NOTICE_VERSION &&
-    topupInfo.pay_methods.some((method) => method.type === 'wxpay')
+    epayPaymentMethods.length > 0
 
   return (
     <>
@@ -152,6 +165,7 @@ export function Wallet(props: WalletProps) {
         open={paymentDialogOpen}
         onOpenChange={setPaymentDialogOpen}
         packageOption={selectedPackage}
+        paymentMethods={epayPaymentMethods}
         supportContacts={topupInfo?.support_contacts ?? []}
         processing={processing}
         onPay={handlePay}

@@ -102,6 +102,12 @@ export interface PaymentMethod {
   icon?: string
 }
 
+export type EpayPaymentMethod = 'alipay' | 'wxpay'
+
+export function isEpayPaymentMethod(value: string): value is EpayPaymentMethod {
+  return value === 'alipay' || value === 'wxpay'
+}
+
 /**
  * Waffo payment method configuration
  */
@@ -313,15 +319,19 @@ export function canSubmitPackagePayment(
 
 export function createPackagePaymentRequest(
   packageId: string,
+  paymentMethod: string,
   refundNotice: RefundNoticeAcceptance
 ): PaymentRequest {
-  if (refundNotice.refund_notice_accepted !== true) {
-    throw new Error('Refund notice acceptance is required')
+  if (
+    !isEpayPaymentMethod(paymentMethod) ||
+    refundNotice.refund_notice_accepted !== true
+  ) {
+    throw new Error('Invalid package payment request')
   }
 
   return {
     package_id: packageId,
-    payment_method: 'wxpay',
+    payment_method: paymentMethod,
     ...refundNotice,
   }
 }

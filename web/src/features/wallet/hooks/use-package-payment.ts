@@ -24,6 +24,7 @@ import { isApiSuccess, requestPayment } from '../api'
 import { submitPaymentForm } from '../lib'
 import {
   createPackagePaymentRequest,
+  type EpayPaymentMethod,
   type RefundNoticeAcceptance,
 } from '../types'
 
@@ -31,11 +32,15 @@ export function usePackagePayment() {
   const [processing, setProcessing] = useState(false)
 
   const processPackagePayment = useCallback(
-    async (packageId: string, refundNotice: RefundNoticeAcceptance) => {
+    async (
+      packageId: string,
+      paymentMethod: EpayPaymentMethod,
+      refundNotice: RefundNoticeAcceptance
+    ) => {
       try {
         setProcessing(true)
         const response = await requestPayment(
-          createPackagePaymentRequest(packageId, refundNotice)
+          createPackagePaymentRequest(packageId, paymentMethod, refundNotice)
         )
 
         if (!isApiSuccess(response)) {
