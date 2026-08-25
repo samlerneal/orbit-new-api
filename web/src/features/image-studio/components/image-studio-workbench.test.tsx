@@ -215,9 +215,9 @@ after(() => {
 describe('image studio workbench', () => {
   test('exposes semantic aspect controls without ratios or pixel sizes', () => {
     renderWorkbench()
-    assert.equal(aspectButton('Square image').disabled, true)
+    assert.equal(aspectButton('Square image').disabled, false)
     assert.equal(aspectButton('Landscape').disabled, false)
-    assert.equal(aspectButton('Portrait').disabled, true)
+    assert.equal(aspectButton('Portrait').disabled, false)
     assert.equal(aspectButton('Custom').disabled, true)
     assert.doesNotMatch(container.textContent ?? '', /1:1|3:4|3:2|16:9|9:16/)
     assert.doesNotMatch(

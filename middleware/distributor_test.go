@@ -31,17 +31,28 @@ func TestNormalizeImageStudioRequestReplacesClientSpecification(t *testing.T) {
 	require.Equal(t, "gpt-image-2", rewritten.Model)
 }
 
-func TestNormalizeImageStudioRequestMapsLandscapeToVerifiedNativeSize(t *testing.T) {
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest("POST", "/pg/images/generations", strings.NewReader(`{"prompt":"safe","aspect":"landscape"}`))
-	c.Request.Header.Set("Content-Type", gin.MIMEJSON)
+func TestNormalizeImageStudioRequestMapsOnlyNativePresetSizes(t *testing.T) {
+	for _, testCase := range []struct {
+		aspect string
+		size   string
+	}{
+		{aspect: "square", size: "1024x1024"},
+		{aspect: "landscape", size: "1536x1024"},
+		{aspect: "portrait", size: "1024x1536"},
+	} {
+		t.Run(testCase.aspect, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/pg/images/generations", strings.NewReader(fmt.Sprintf(`{"prompt":"safe","aspect":"%s"}`, testCase.aspect)))
+			c.Request.Header.Set("Content-Type", gin.MIMEJSON)
 
-	require.NoError(t, normalizeImageStudioRequest(c))
-	storage, err := common.GetBodyStorage(c)
-	require.NoError(t, err)
-	body, err := storage.Bytes()
-	require.NoError(t, err)
-	require.JSONEq(t, `{"model":"gpt-image-2","prompt":"safe","n":1,"size":"1536x1024","quality":"low","response_format":"b64_json","background":"opaque","output_format":"png","stream":false}`, string(body))
+			require.NoError(t, normalizeImageStudioRequest(c))
+			storage, err := common.GetBodyStorage(c)
+			require.NoError(t, err)
+			body, err := storage.Bytes()
+			require.NoError(t, err)
+			require.JSONEq(t, fmt.Sprintf(`{"model":"gpt-image-2","prompt":"safe","n":1,"size":"%s","quality":"low","response_format":"b64_json","background":"opaque","output_format":"png","stream":false}`, testCase.size), string(body))
+		})
+	}
 }
 
 func TestNormalizeImageStudioRequestRejectsInvalidAspectValues(t *testing.T) {
@@ -50,9 +61,7 @@ func TestNormalizeImageStudioRequestRejectsInvalidAspectValues(t *testing.T) {
 		`{"prompt":"safe","aspect":""}`,
 		`{"prompt":"safe","aspect":null}`,
 		`{"prompt":"safe","aspect":1}`,
-		`{"prompt":"safe","aspect":"square"}`,
 		`{"prompt":"safe","aspect":"xiaohongshu"}`,
-		`{"prompt":"safe","aspect":"portrait"}`,
 		`{"prompt":"safe","aspect":"Square"}`,
 		`{"prompt":"safe","aspect":"wide"}`,
 	} {

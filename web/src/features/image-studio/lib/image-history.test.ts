@@ -154,21 +154,34 @@ describe('image history storage', () => {
     )
   })
 
-  test('retains the aspect and dimensions of newly saved records', async () => {
-    await saveImageHistoryItem({
-      ...createItem('portrait', 1),
-      aspect: 'portrait',
-      blob: new Blob([png(864, 1536)], { type: 'image/png' }),
-      height: 1536,
-      size: '864×1536 PNG',
-      width: 864,
-    })
+  test('retains Blob facts for each native preset after reload', async () => {
+    const presets = [
+      { aspect: 'square' as const, height: 1024, width: 1024 },
+      { aspect: 'landscape' as const, height: 1024, width: 1536 },
+      { aspect: 'portrait' as const, height: 1536, width: 1024 },
+    ]
+    for (const [index, preset] of presets.entries()) {
+      await saveImageHistoryItem({
+        ...createItem(preset.aspect, index),
+        aspect: preset.aspect,
+        blob: new Blob([png(preset.width, preset.height)], {
+          type: 'image/png',
+        }),
+        height: preset.height,
+        size: `${preset.width}×${preset.height} PNG`,
+        width: preset.width,
+      })
+    }
 
-    const [loaded] = await loadImageHistory(ownerId)
-    assert.equal(loaded?.aspect, 'portrait')
-    assert.equal(loaded?.width, 864)
-    assert.equal(loaded?.height, 1536)
-    assert.equal(loaded?.size, '864×1536 PNG')
+    const loaded = await loadImageHistory(ownerId)
+    for (const preset of presets) {
+      const item = loaded.find(
+        (candidate) => candidate.aspect === preset.aspect
+      )
+      assert.equal(item?.width, preset.width)
+      assert.equal(item?.height, preset.height)
+      assert.equal(item?.size, `${preset.width}×${preset.height} PNG`)
+    }
   })
 
   test('fails closed when a stored aspect declaration disagrees with PNG IHDR', async () => {

@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, mock, test } from 'node:test'
 import { deflateSync } from 'node:zlib'
 
-import type { ImageGenerationResponse, ImageGenerationState } from '../types'
+import type {
+  ImageAspect,
+  ImageGenerationResponse,
+  ImageGenerationState,
+} from '../types'
 import {
   createImageGenerationLifecycle,
   type ImageGenerationRequest,
@@ -48,7 +52,7 @@ function pngBase64(width: number, height: number) {
   ]).toString('base64')
 }
 const squarePngBase64 = pngBase64(1024, 1024)
-const portraitPngBase64 = pngBase64(864, 1536)
+const portraitPngBase64 = pngBase64(1024, 1536)
 const landscapePngBase64 = pngBase64(1536, 1024)
 
 function deferred<T>() {
@@ -163,6 +167,26 @@ describe('image generation request lifecycle', () => {
     )
     await lifecycle.generate('fixture', 'landscape')
     assert.equal(lifecycle.getState().status, 'error')
+  })
+
+  test('accepts each native preset only when its PNG matches the request snapshot', async () => {
+    const fixtures: Record<ImageAspect, string> = {
+      landscape: landscapePngBase64,
+      portrait: portraitPngBase64,
+      square: squarePngBase64,
+      xiaohongshu: pngBase64(1056, 1408),
+    }
+    mock.method(URL, 'createObjectURL', () => 'blob:generated')
+    const lifecycle = createImageGenerationLifecycle(
+      (_prompt, aspect) =>
+        Promise.resolve({ data: [{ b64_json: fixtures[aspect] }] }),
+      () => undefined
+    )
+
+    for (const aspect of ['square', 'landscape', 'portrait'] as const) {
+      await lifecycle.generate('fixture', aspect)
+      assert.equal(lifecycle.getState().status, 'success')
+    }
   })
 
   test('persists only the single decoded blob from a successful response', async () => {

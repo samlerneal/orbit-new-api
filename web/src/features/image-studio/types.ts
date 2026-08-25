@@ -25,8 +25,8 @@ export const imageAspectMetadata: Record<
   portrait: {
     aspect: 'portrait',
     height: 1536,
-    size: '864×1536 PNG',
-    width: 864,
+    size: '1024×1536 PNG',
+    width: 1024,
   },
 }
 

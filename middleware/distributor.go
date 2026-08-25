@@ -38,7 +38,9 @@ type imageStudioRequest struct {
 }
 
 var imageStudioAspectSizes = map[string]string{
+	"square":    "1024x1024",
 	"landscape": "1536x1024",
+	"portrait":  "1024x1536",
 }
 
 const imageStudioExpectedSizeContextKey = "image_studio_expected_size"

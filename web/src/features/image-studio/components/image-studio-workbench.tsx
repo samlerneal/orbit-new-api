@@ -33,15 +33,15 @@ const aspectOptions: Array<{
   available: boolean
   label: string
 }> = [
-  { aspect: 'square', available: false, label: 'Square image' },
+  { aspect: 'square', available: true, label: 'Square image' },
   { aspect: 'landscape', available: true, label: 'Landscape' },
-  { aspect: 'portrait', available: false, label: 'Portrait' },
+  { aspect: 'portrait', available: true, label: 'Portrait' },
 ]
 
 function aspectFrameClass(aspect: ImageAspect): string {
   if (aspect === 'xiaohongshu') return 'aspect-[3/4]'
   if (aspect === 'landscape') return 'aspect-[3/2]'
-  if (aspect === 'portrait') return 'aspect-[9/16]'
+  if (aspect === 'portrait') return 'aspect-[2/3]'
   return 'aspect-square'
 }
 
